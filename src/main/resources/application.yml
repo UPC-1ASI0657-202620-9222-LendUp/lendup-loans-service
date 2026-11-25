@@ -1,0 +1,89 @@
+server:
+  port: ${SERVER_PORT:8087}
+  shutdown: graceful
+spring:
+  application:
+    name: lendup-loans-service
+  datasource:
+    url: ${DB_URL:jdbc:mysql://localhost:3313/lendup_prestamos?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC}
+    username: ${DB_USERNAME:lendup_prestamos}
+    password: ${DB_PASSWORD:}
+    hikari:
+      maximum-pool-size: ${DB_POOL_MAX_SIZE:20}
+      connection-timeout: 3000
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate.jdbc.time_zone: UTC
+      # Las fechas pactadas (LocalDateTime, hora de Lima) se guardan tal cual, sin depender de la zona de la JVM.
+      hibernate.type.java_time_use_direct_jdbc: true
+      hibernate.query.fail_on_pagination_over_collection_fetch: true
+  flyway:
+    enabled: true
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USERNAME:}
+    password: ${RABBITMQ_PASSWORD:}
+    publisher-confirm-type: correlated
+    publisher-returns: true
+    template:
+      mandatory: true
+    listener:
+      simple:
+        acknowledge-mode: auto
+        default-requeue-rejected: false
+        # Un consumidor por instancia: conserva el orden de los eventos de una misma reserva.
+        concurrency: 1
+        max-concurrency: 1
+        retry:
+          enabled: true
+          max-attempts: 3
+          initial-interval: 500ms
+          multiplier: 2
+          max-interval: 2s
+  jackson:
+    default-property-inclusion: non_null
+management:
+  endpoints.web.exposure.include: health
+  endpoint.health:
+    probes.enabled: true
+    show-details: never
+springdoc:
+  api-docs.enabled: ${SPRINGDOC_ENABLED:false}
+  swagger-ui.enabled: ${SPRINGDOC_ENABLED:false}
+firebase:
+  project-id: ${FIREBASE_PROJECT_ID}
+lendup:
+  security:
+    cors-origins: ${CORS_ORIGINS:}
+    swagger-public: ${SWAGGER_PUBLIC:false}
+    # Token que Reservas usa en la ruta interna de vigencia de contacto (mínimo 32 caracteres).
+    reservations-service-token: ${LOANS_RESERVATIONS_SERVICE_TOKEN:}
+  outbox:
+    relay-delay-ms: ${OUTBOX_RELAY_DELAY_MS:1000}
+    max-attempts: ${OUTBOX_MAX_ATTEMPTS:10}
+  overdue:
+    check-delay-ms: ${OVERDUE_CHECK_DELAY_MS:60000}
+    batch-size: ${OVERDUE_BATCH_SIZE:100}
+  events:
+    incident-reported-routing-key: ${INCIDENT_REPORTED_ROUTING_KEY:evidencias.incidencia-reportada.v1}
+    incident-resolved-routing-key: ${INCIDENT_RESOLVED_ROUTING_KEY:evidencias.incidencia-resuelta.v1}
+    # Copia de PrestamoFinalizado en el formato que exige Reputación; vacía la desactiva.
+    reputation-loan-finished-routing-key: ${REPUTATION_LOAN_FINISHED_ROUTING_KEY:loans.loan-finalized.v1}
+  integrations:
+    identity:
+      base-url: ${IDENTITY_SERVICE_BASE_URL:}
+      service-token: ${IDENTITY_SERVICE_TOKEN:}
+      firebase-user-uri-template: ${IDENTITY_FIREBASE_USER_URI_TEMPLATE:}
+      connect-timeout-ms: ${IDENTITY_CONNECT_TIMEOUT_MS:2000}
+      read-timeout-ms: ${IDENTITY_READ_TIMEOUT_MS:3000}
+    evidence:
+      base-url: ${EVIDENCE_SERVICE_BASE_URL:}
+      loan-evidence-uri-template: ${EVIDENCE_LOAN_EVIDENCE_URI_TEMPLATE:}
+      connect-timeout-ms: ${EVIDENCE_CONNECT_TIMEOUT_MS:1000}
+      read-timeout-ms: ${EVIDENCE_READ_TIMEOUT_MS:2000}
+logging:
+  config: classpath:logback-spring.xml
