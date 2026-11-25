@@ -1,0 +1,11 @@
+{
+  "event_id": "a0000000-0000-4000-8000-000000000007",
+  "event_type": "PrestamoFinalizado",
+  "event_version": 1,
+  "prestamo_id": "c3333333-3333-4333-8333-333333333333",
+  "prestamista_usuario_id": "55555555-5555-4555-8555-555555555555",
+  "prestatario_usuario_id": "66666666-6666-4666-8666-666666666666",
+  "finalizado_en": "2026-11-13T10:00:00Z",
+  "correlation_id": "50000000-0000-4000-8000-000000000001",
+  "aggregate_version": 9
+}

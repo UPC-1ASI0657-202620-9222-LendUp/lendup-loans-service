@@ -1,0 +1,267 @@
+openapi: 3.1.0
+info:
+  title: LendUp Loans API
+  version: 1.0.0
+  description: >-
+    Ciclo del préstamo: entrega, recepción, extensiones, reprogramaciones, devolución y cierre. JSON en snake_case.
+    Las fechas pactadas (entrega_programada_en, devolucion_*_en de acuerdo y fecha_*_en) son hora de negocio
+    America/Lima sin offset; los demás *_en son instantes UTC.
+servers: [{ url: /api/v1 }]
+security: [{ firebaseBearer: [] }]
+paths:
+  /prestamos:
+    get:
+      operationId: listarPrestamos
+      tags: [Préstamos]
+      description: Préstamos donde el usuario participa como prestamista o prestatario.
+      parameters:
+        - { name: estado, in: query, required: false, schema: { $ref: '#/components/schemas/EstadoPrestamo' } }
+      responses:
+        '200': { description: Lista, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Prestamo' } } } } }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+  /prestamos/{id}:
+    parameters: [{ $ref: '#/components/parameters/PrestamoId' }]
+    get:
+      operationId: obtenerPrestamo
+      tags: [Préstamos]
+      description: Solo participantes. Incluye cambios de fecha y evidencias.
+      responses:
+        '200': { $ref: '#/components/responses/Prestamo' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+  /prestamos/{id}/entrega:
+    parameters: [{ $ref: '#/components/parameters/PrestamoId' }]
+    post:
+      operationId: registrarEntrega
+      tags: [Préstamos]
+      description: Solo el prestamista. Exige tarifa pagada y garantía constituida si corresponde (RF19).
+      responses:
+        '200': { $ref: '#/components/responses/Prestamo' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+  /prestamos/{id}/recepcion:
+    parameters: [{ $ref: '#/components/parameters/PrestamoId' }]
+    post:
+      operationId: confirmarRecepcion
+      tags: [Préstamos]
+      description: Solo el prestatario. Activa el préstamo (RF20).
+      responses:
+        '200': { $ref: '#/components/responses/Prestamo' }
+        '403': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+  /prestamos/{id}/devolucion:
+    parameters: [{ $ref: '#/components/parameters/PrestamoId' }]
+    post:
+      operationId: registrarDevolucion
+      tags: [Préstamos]
+      description: Solo el prestatario, con el préstamo activo o vencido (RF26).
+      responses:
+        '200': { $ref: '#/components/responses/Prestamo' }
+        '403': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+  /prestamos/{id}/confirmacion-devolucion:
+    parameters: [{ $ref: '#/components/parameters/PrestamoId' }]
+    post:
+      operationId: confirmarDevolucion
+      tags: [Préstamos]
+      description: Solo el prestamista. Finaliza el préstamo si no hay incidencias pendientes (RF27).
+      responses:
+        '200': { $ref: '#/components/responses/Prestamo' }
+        '403': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+  /prestamos/{id}/extensiones:
+    parameters: [{ $ref: '#/components/parameters/PrestamoId' }]
+    post:
+      operationId: solicitarExtension
+      tags: [Extensiones]
+      description: Solo el prestatario, antes del vencimiento. El servidor calcula el costo; si costo_adicional no coincide responde 409.
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/ExtensionRequest' } } } }
+      responses:
+        '201': { $ref: '#/components/responses/CambioFecha' }
+        '400': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+  /prestamos/{id}/extensiones/cotizacion:
+    parameters: [{ $ref: '#/components/parameters/PrestamoId' }]
+    post:
+      operationId: cotizarExtension
+      tags: [Extensiones]
+      requestBody: { required: false, content: { application/json: { schema: { type: object, properties: { fecha_propuesta_en: { $ref: '#/components/schemas/FechaLocal' } } } } } }
+      responses:
+        '200': { description: Cotización, content: { application/json: { schema: { $ref: '#/components/schemas/CotizacionExtension' } } } }
+        '403': { $ref: '#/components/responses/Error' }
+  /prestamos/{id}/extensiones/{subid}/respuesta:
+    parameters: [{ $ref: '#/components/parameters/PrestamoId' }, { $ref: '#/components/parameters/CambioId' }]
+    post:
+      operationId: responderExtension
+      tags: [Extensiones]
+      description: Solo el prestamista. Al aceptar queda pendiente de pago; la fecha cambia cuando Pagos confirma PAGO_EXTENSION (RF24).
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/RespuestaExtension' } } } }
+      responses:
+        '200': { $ref: '#/components/responses/CambioFecha' }
+        '400': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+  /prestamos/{id}/reprogramaciones:
+    parameters: [{ $ref: '#/components/parameters/PrestamoId' }]
+    post:
+      operationId: proponerReprogramacion
+      tags: [Reprogramaciones]
+      description: Solo el prestamista, antes del vencimiento y sin costo (RF25).
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [fecha_propuesta_en], properties: { fecha_propuesta_en: { $ref: '#/components/schemas/FechaLocal' } } } } } }
+      responses:
+        '201': { $ref: '#/components/responses/CambioFecha' }
+        '400': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+  /prestamos/{id}/reprogramaciones/{subid}/respuesta:
+    parameters: [{ $ref: '#/components/parameters/PrestamoId' }, { $ref: '#/components/parameters/CambioId' }]
+    post:
+      operationId: responderReprogramacion
+      tags: [Reprogramaciones]
+      description: Solo el prestatario. Si la acepta cambia la fecha vigente.
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/RespuestaReprogramacion' } } } }
+      responses:
+        '200': { $ref: '#/components/responses/CambioFecha' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+  /prestamos/{id}/cambios-fecha:
+    parameters: [{ $ref: '#/components/parameters/PrestamoId' }]
+    get:
+      operationId: listarCambiosFecha
+      tags: [Extensiones]
+      description: Historial de extensiones y reprogramaciones (RF47). Ruta nueva, no existía en el monolito.
+      responses:
+        '200': { description: Historial, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/CambioFecha' } } } } }
+        '403': { $ref: '#/components/responses/Error' }
+  /prestamos/{id}/cotizacion-pago:
+    parameters: [{ $ref: '#/components/parameters/PrestamoId' }]
+    get:
+      operationId: cotizarPago
+      tags: [Préstamos]
+      responses:
+        '200': { description: Cotización, content: { application/json: { schema: { $ref: '#/components/schemas/CotizacionPago' } } } }
+        '403': { $ref: '#/components/responses/Error' }
+  /calendario:
+    get:
+      operationId: calendario
+      tags: [Préstamos]
+      description: Reservas confirmadas y préstamos (sin cancelados), ordenados por fecha de entrega (RF29).
+      responses:
+        '200': { description: Operaciones programadas, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Prestamo' } } } } }
+        '401': { $ref: '#/components/responses/Error' }
+components:
+  securitySchemes:
+    firebaseBearer: { type: http, scheme: bearer, bearerFormat: JWT }
+  parameters:
+    PrestamoId: { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    CambioId: { name: subid, in: path, required: true, schema: { type: string, format: uuid } }
+  responses:
+    Prestamo: { description: Préstamo, content: { application/json: { schema: { $ref: '#/components/schemas/Prestamo' } } } }
+    CambioFecha: { description: Cambio de fecha, content: { application/json: { schema: { $ref: '#/components/schemas/CambioFecha' } } } }
+    Error: { description: 'Error con el formato común de LendUp', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+  schemas:
+    FechaLocal: { type: string, example: '2026-11-13T09:00:00', description: 'Hora de Lima sin offset; si se envía con offset o Z se convierte a Lima' }
+    EstadoPrestamo: { type: string, enum: [RESERVADO, ENTREGA_REGISTRADA, ACTIVO, VENCIDO, DEVOLUCION_REGISTRADA, FINALIZADO, CANCELADO] }
+    Prestamo:
+      type: object
+      required: [id, reserva_id, publicacion_id, prestamista_usuario_id, prestatario_usuario_id, estado, entrega_programada_en, devolucion_original_en, devolucion_vigente_en, tarifa_diaria_acordada, moneda, garantia_requerida, incidencias_pendientes, creado_en, actualizado_en]
+      properties:
+        id: { type: string, format: uuid }
+        reserva_id: { type: string, format: uuid }
+        publicacion_id: { type: string, format: uuid }
+        prestamista_usuario_id: { type: string, format: uuid }
+        prestatario_usuario_id: { type: string, format: uuid }
+        estado: { $ref: '#/components/schemas/EstadoPrestamo' }
+        estado_detalle: { type: string, description: 'Estado interno; agrega PENDIENTE_INCIDENCIA, que en estado se muestra como DEVOLUCION_REGISTRADA' }
+        entrega_programada_en: { $ref: '#/components/schemas/FechaLocal' }
+        devolucion_original_en: { $ref: '#/components/schemas/FechaLocal' }
+        devolucion_vigente_en: { $ref: '#/components/schemas/FechaLocal' }
+        tarifa_diaria_acordada: { type: number }
+        moneda: { type: string, example: PEN }
+        garantia_requerida: { type: boolean }
+        garantia_monetaria_acordada: { type: number }
+        pago_tarifa_confirmado_en: { type: string, format: date-time }
+        garantia_constituida_en: { type: string, format: date-time }
+        entrega_registrada_en: { type: string, format: date-time }
+        recepcion_confirmada_en: { type: string, format: date-time }
+        activado_en: { type: string, format: date-time }
+        devolucion_registrada_en: { type: string, format: date-time }
+        devolucion_confirmada_en: { type: string, format: date-time }
+        incidencias_pendientes: { type: integer }
+        vencido_en: { type: string, format: date-time }
+        finalizado_en: { type: string, format: date-time }
+        cancelado_en: { type: string, format: date-time }
+        creado_en: { type: string, format: date-time }
+        actualizado_en: { type: string, format: date-time }
+        cambios_fecha: { type: array, items: { $ref: '#/components/schemas/CambioFecha' } }
+        evidencias: { type: array, items: { type: object }, description: 'De Evidencias e Incidencias; vacío si no está configurado o no responde' }
+    CambioFecha:
+      type: object
+      required: [id, prestamo_id, tipo, estado, propuesto_por_usuario_id, fecha_anterior_en, fecha_propuesta_en, propuesto_en]
+      properties:
+        id: { type: string, format: uuid }
+        prestamo_id: { type: string, format: uuid }
+        tipo: { type: string, enum: [EXTENSION, REPROGRAMACION] }
+        estado: { type: string, enum: [PENDIENTE, RECHAZADA, ACEPTADA_PENDIENTE_PAGO, APLICADA] }
+        propuesto_por_usuario_id: { type: string, format: uuid }
+        fecha_anterior_en: { $ref: '#/components/schemas/FechaLocal' }
+        fecha_propuesta_en: { $ref: '#/components/schemas/FechaLocal' }
+        costo_adicional: { type: number, description: Solo en extensiones }
+        moneda: { type: string }
+        propuesto_en: { type: string, format: date-time }
+        respondido_por_usuario_id: { type: string, format: uuid }
+        respondido_en: { type: string, format: date-time }
+        motivo_rechazo: { type: string }
+        transaccion_pago_id: { type: string, format: uuid }
+        pago_confirmado_en: { type: string, format: date-time }
+        fecha_resultante_en: { $ref: '#/components/schemas/FechaLocal' }
+        aplicado_en: { type: string, format: date-time }
+    ExtensionRequest:
+      type: object
+      required: [fecha_propuesta_en]
+      properties:
+        fecha_propuesta_en: { $ref: '#/components/schemas/FechaLocal' }
+        costo_adicional: { type: number, description: Costo mostrado al usuario }
+        moneda: { type: string, example: PEN }
+    RespuestaExtension:
+      type: object
+      required: [estado]
+      properties: { estado: { type: string, enum: [RECHAZADA, ACEPTADA_PENDIENTE_PAGO] }, motivo_rechazo: { type: string, maxLength: 1000 } }
+    RespuestaReprogramacion:
+      type: object
+      required: [estado]
+      properties: { estado: { type: string, enum: [RECHAZADA, APLICADA] }, motivo_rechazo: { type: string, maxLength: 1000 } }
+    CotizacionExtension:
+      type: object
+      properties:
+        prestamo_id: { type: string, format: uuid }
+        tarifa_diaria: { type: number }
+        moneda: { type: string }
+        estado: { type: string, enum: [COTIZACION_PRELIMINAR, CALCULADA] }
+        mensaje: { type: string }
+        devolucion_vigente_en: { $ref: '#/components/schemas/FechaLocal' }
+        fecha_propuesta_en: { $ref: '#/components/schemas/FechaLocal' }
+        costo_adicional: { type: number }
+    CotizacionPago:
+      type: object
+      properties:
+        prestamo_id: { type: string, format: uuid }
+        tarifa_diaria: { type: number }
+        garantia: { type: number }
+        moneda: { type: string }
+        estado: { type: string, example: COTIZACION_PRELIMINAR }
+        importe_tarifa: { type: number, description: Tarifa diaria por bloques iniciados de 24 horas }
+    Error:
+      type: object
+      required: [status, error, message]
+      properties:
+        status: { type: integer, example: 409 }
+        error: { type: string, enum: [SOLICITUD_INVALIDA, AUTENTICACION_REQUERIDA, TOKEN_INVALIDO, EMAIL_NOT_VERIFIED, NO_AUTORIZADO, NO_ENCONTRADO, CONFLICTO_NEGOCIO, CONFLICTO_DATOS, DEPENDENCIA_NO_DISPONIBLE] }
+        message: { type: string }
+        timestamp: { type: string, format: date-time }

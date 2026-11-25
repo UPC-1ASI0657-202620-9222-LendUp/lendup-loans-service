@@ -1,0 +1,1797 @@
+{
+  "info": {
+    "name": "LendUp Loans Service",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Prueba Préstamos solo: los eventos de Reservas y Pagos se simulan en RabbitMQ. Se puede correr completa con el Runner, en orden. Si un evento responde routed=false, Préstamos no está conectado a ese broker."
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Modo emulador (entorno e2e local): genera los tokens del emulador de Firebase; un servicio real los rechaza.",
+          "if (pm.variables.get('modo_emulador') === 'si') {",
+          "  const b64 = (o) => btoa(JSON.stringify(o)).replace(/\\+/g, '-').replace(/\\//g, '_').replace(/=+$/, '');",
+          "  const now = Math.floor(Date.now() / 1000);",
+          "  const token = (uid) => b64({ alg: 'none', typ: 'JWT' }) + '.' + b64({ iss: 'https://securetoken.google.com/lendup-desarrollo', aud: 'lendup-desarrollo', sub: uid, user_id: uid, iat: now - 5, exp: now + 3600, auth_time: now - 5, email: uid + '@upc.edu.pe', email_verified: true, firebase: { identities: {}, sign_in_provider: 'password' } }) + '.';",
+          "  for (const quien of ['prestamista', 'prestatario', 'intruso']) pm.collectionVariables.set('token_' + quien, token('e2e-' + quien));",
+          "}"
+        ]
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8087/api/v1"
+    },
+    {
+      "key": "identity_url",
+      "value": "http://localhost:8085"
+    },
+    {
+      "key": "rabbit_url",
+      "value": "http://localhost:15677"
+    },
+    {
+      "key": "rabbit_user",
+      "value": "lendup_prestamos"
+    },
+    {
+      "key": "rabbit_pass",
+      "value": "change-me"
+    },
+    {
+      "key": "modo_emulador",
+      "value": "no"
+    },
+    {
+      "key": "firebase_api_key",
+      "value": "PEGAR_API_KEY_WEB_DE_FIREBASE"
+    },
+    {
+      "key": "prestamista_email",
+      "value": "PEGAR_CORREO"
+    },
+    {
+      "key": "prestamista_password",
+      "value": "PEGAR_CONTRASENA"
+    },
+    {
+      "key": "prestatario_email",
+      "value": "PEGAR_CORREO"
+    },
+    {
+      "key": "prestatario_password",
+      "value": "PEGAR_CONTRASENA"
+    },
+    {
+      "key": "token_prestamista",
+      "value": ""
+    },
+    {
+      "key": "token_prestatario",
+      "value": ""
+    },
+    {
+      "key": "token_intruso",
+      "value": ""
+    },
+    {
+      "key": "token_invalido",
+      "value": "no-es-un-token"
+    },
+    {
+      "key": "prestamista_usuario_id",
+      "value": ""
+    },
+    {
+      "key": "prestatario_usuario_id",
+      "value": ""
+    },
+    {
+      "key": "reserva_id",
+      "value": ""
+    },
+    {
+      "key": "publicacion_id",
+      "value": ""
+    },
+    {
+      "key": "prestamo_id",
+      "value": ""
+    },
+    {
+      "key": "cambio_id",
+      "value": ""
+    },
+    {
+      "key": "vigente",
+      "value": ""
+    },
+    {
+      "key": "nueva_fecha",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "0. Preparación",
+      "item": [
+        {
+          "name": "Readiness",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Correlation-ID",
+                "value": "postman-{{$guid}}"
+              }
+            ],
+            "url": "http://localhost:8087/actuator/health/readiness"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Cada corrida usa una reserva y un objeto nuevos.",
+                  "pm.collectionVariables.set('reserva_id', pm.variables.replaceIn('{{$guid}}'));",
+                  "pm.collectionVariables.set('publicacion_id', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('UP', () => { pm.response.to.have.status(200); const b = pm.response.json(); pm.expect(b.status).to.eql('UP'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Token del prestamista (Firebase)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Correlation-ID",
+                "value": "postman-{{$guid}}"
+              }
+            ],
+            "url": "https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key={{firebase_api_key}}",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{prestamista_email}}\",\n  \"password\": \"{{prestamista_password}}\",\n  \"returnSecureToken\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Proyecto Firebase del equipo (lendup-desarrollo), usuario de prueba con correo verificado."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Se salta en modo emulador o si ya pegaste el token a mano.",
+                  "const p = pm.variables.get('prestamista_password') || '';",
+                  "if (pm.variables.get('modo_emulador') === 'si' || !p || p.startsWith('PEGAR')) pm.execution.skipRequest();"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 con idToken', () => { pm.response.to.have.status(200); pm.collectionVariables.set('token_prestamista', pm.response.json().idToken); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Token del prestatario (Firebase)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Correlation-ID",
+                "value": "postman-{{$guid}}"
+              }
+            ],
+            "url": "https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key={{firebase_api_key}}",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{prestatario_email}}\",\n  \"password\": \"{{prestatario_password}}\",\n  \"returnSecureToken\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Proyecto Firebase del equipo (lendup-desarrollo), usuario de prueba con correo verificado."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Se salta en modo emulador o si ya pegaste el token a mano.",
+                  "const p = pm.variables.get('prestatario_password') || '';",
+                  "if (pm.variables.get('modo_emulador') === 'si' || !p || p.startsWith('PEGAR')) pm.execution.skipRequest();"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 con idToken', () => { pm.response.to.have.status(200); pm.collectionVariables.set('token_prestatario', pm.response.json().idToken); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Usuario del prestamista (Identidad)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token_prestamista}}"
+              },
+              {
+                "key": "X-Correlation-ID",
+                "value": "postman-{{$guid}}"
+              }
+            ],
+            "url": "{{identity_url}}/api/v1/estudiantes/me"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 con usuario.id', () => { pm.response.to.have.status(200); pm.collectionVariables.set('prestamista_usuario_id', pm.response.json().usuario.id); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Usuario del prestatario (Identidad)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token_prestatario}}"
+              },
+              {
+                "key": "X-Correlation-ID",
+                "value": "postman-{{$guid}}"
+              }
+            ],
+            "url": "{{identity_url}}/api/v1/estudiantes/me"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 con usuario.id', () => { pm.response.to.have.status(200); pm.collectionVariables.set('prestatario_usuario_id', pm.response.json().usuario.id); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Crear cola espía (ver todos los eventos en el broker)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Correlation-ID",
+                "value": "postman-{{$guid}}"
+              }
+            ],
+            "url": "{{rabbit_url}}/api/queues/%2F/debug.lendup.eventos",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"durable\": false,\n  \"auto_delete\": false,\n  \"arguments\": {\n    \"x-max-length\": 2000\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Solo para pruebas: copia todos los eventos. Sin ninguna cola suscrita RabbitMQ no guarda los mensajes.",
+            "auth": {
+              "type": "basic",
+              "basic": [
+                {
+                  "key": "username",
+                  "value": "{{rabbit_user}}"
+                },
+                {
+                  "key": "password",
+                  "value": "{{rabbit_pass}}"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Cola lista', () => pm.expect([201, 204]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Enlazar cola espía a todos los eventos (#)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Correlation-ID",
+                "value": "postman-{{$guid}}"
+              }
+            ],
+            "url": "{{rabbit_url}}/api/bindings/%2F/e/lendup.domain.events/q/debug.lendup.eventos",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"routing_key\": \"#\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "basic",
+              "basic": [
+                {
+                  "key": "username",
+                  "value": "{{rabbit_user}}"
+                },
+                {
+                  "key": "password",
+                  "value": "{{rabbit_pass}}"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Enlazada', () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "1. Eventos simulados: de la reserva al préstamo listo",
+      "item": [
+        {
+          "name": "ReservaConfirmada (Reservas)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Correlation-ID",
+                "value": "postman-{{$guid}}"
+              }
+            ],
+            "url": "{{rabbit_url}}/api/exchanges/%2F/lendup.domain.events/publish",
+            "body": {
+              "mode": "raw",
+              "raw": "{{rabbit_body}}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Publica en RabbitMQ (API de administración) un mensaje como el del servicio productor. routed=false significa que nadie escucha en ese broker.",
+            "auth": {
+              "type": "basic",
+              "basic": [
+                {
+                  "key": "username",
+                  "value": "{{rabbit_user}}"
+                },
+                {
+                  "key": "password",
+                  "value": "{{rabbit_pass}}"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const lima = (h) => new Date(Date.now() - 5 * 3600000 + h * 3600000).toISOString().slice(0, 19);",
+                  "const v = (k) => pm.variables.get(k);",
+                  "const payload = { reserva_id: v('reserva_id'), solicitud_id: pm.variables.replaceIn('{{$guid}}'), publicacion_id: v('publicacion_id'), prestamista_usuario_id: v('prestamista_usuario_id'), prestatario_usuario_id: v('prestatario_usuario_id'), desde: lima(-1), hasta: lima(47), tarifa_diaria_acordada: 20.00, garantia_monetaria_acordada: 50.00, moneda_acordada: 'PEN', lugar_intercambio_acordado: 'Campus' };",
+                  "const envelope = { event_id: pm.variables.replaceIn('{{$guid}}'), event_type: 'ReservaConfirmada', event_version: 1, aggregate_version: Date.now(), aggregate_id: v('reserva_id'), occurred_at: new Date().toISOString(), correlation_id: 'postman', payload };",
+                  "pm.variables.set('rabbit_body', JSON.stringify({ properties: { content_type: 'application/json' }, routing_key: 'reservas.confirmada.v1', payload: JSON.stringify(envelope), payload_encoding: 'string' }));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Publicado y enrutado a una cola', () => { pm.response.to.have.status(200); pm.expect(pm.response.json().routed).to.eql(true); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Buscar el préstamo creado",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token_prestatario}}"
+              },
+              {
+                "key": "X-Correlation-ID",
+                "value": "postman-{{$guid}}"
+              }
+            ],
+            "url": "{{base_url}}/prestamos"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// El cambio llega por RabbitMQ: se espera a que se procese.",
+                  "setTimeout(() => {}, 2500);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Préstamos creó el préstamo en estado RESERVADO', () => { pm.response.to.have.status(200); const p = pm.response.json().find(x => x.reserva_id === pm.variables.get('reserva_id')); pm.expect(p, 'préstamo').to.be.an('object'); pm.expect(p.estado).to.eql('RESERVADO'); pm.collectionVariables.set('prestamo_id', p.id); pm.collectionVariables.set('vigente', p.devolucion_vigente_en); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Entregar sin pago (409)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token_prestamista}}"
+              },
+              {
+                "key": "X-Correlation-ID",
+                "value": "postman-{{$guid}}"
+              }
+            ],
+            "url": "{{base_url}}/prestamos/{{prestamo_id}}/entrega"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409 Falta el pago o la garantía', () => { pm.response.to.have.status(409); const b = pm.response.json(); pm.expect(b.message).to.include('pago o la garantía'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PagoConfirmado - tarifa (Pagos)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Correlation-ID",
+                "value": "postman-{{$guid}}"
+              }
+            ],
+            "url": "{{rabbit_url}}/api/exchanges/%2F/lendup.domain.events/publish",
+            "body": {
+              "mode": "raw",
+              "raw": "{{rabbit_body}}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Publica en RabbitMQ (API de administración) un mensaje como el del servicio productor. routed=false significa que nadie escucha en ese broker.",
+            "auth": {
+              "type": "basic",
+              "basic": [
+                {
+                  "key": "username",
+                  "value": "{{rabbit_user}}"
+                },
+                {
+                  "key": "password",
+                  "value": "{{rabbit_pass}}"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const v = (k) => pm.variables.get(k);",
+                  "const payload = { prestamo_id: v('prestamo_id'), reserva_id: v('reserva_id'), prestatario_usuario_id: v('prestatario_usuario_id'), prestamista_usuario_id: v('prestamista_usuario_id'), transaccion_id: pm.variables.replaceIn('{{$guid}}'), tipo: 'PAGO_TARIFA', estado: 'CONFIRMADA', monto: 40.00, moneda: 'PEN', confirmada_en: new Date().toISOString() };",
+                  "const envelope = { event_id: pm.variables.replaceIn('{{$guid}}'), event_type: 'PagoConfirmado', event_version: 1, aggregate_version: Date.now(), aggregate_id: v('reserva_id'), occurred_at: new Date().toISOString(), correlation_id: 'postman', payload };",
+                  "pm.variables.set('rabbit_body', JSON.stringify({ properties: { content_type: 'application/json' }, routing_key: 'pagos.pago-confirmado.v1', payload: JSON.stringify(envelope), payload_encoding: 'string' }));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Publicado y enrutado a una cola', () => { pm.response.to.have.status(200); pm.expect(pm.response.json().routed).to.eql(true); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GarantiaConstituida (Pagos)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Correlation-ID",
+                "value": "postman-{{$guid}}"
+              }
+            ],
+            "url": "{{rabbit_url}}/api/exchanges/%2F/lendup.domain.events/publish",
+            "body": {
+              "mode": "raw",
+              "raw": "{{rabbit_body}}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Publica en RabbitMQ (API de administración) un mensaje como el del servicio productor. routed=false significa que nadie escucha en ese broker.",
+            "auth": {
+              "type": "basic",
+              "basic": [
+                {
+                  "key": "username",
+                  "value": "{{rabbit_user}}"
+                },
+                {
+                  "key": "password",
+                  "value": "{{rabbit_pass}}"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const v = (k) => pm.variables.get(k);",
+                  "const payload = { prestamo_id: v('prestamo_id'), reserva_id: v('reserva_id'), prestatario_usuario_id: v('prestatario_usuario_id'), prestamista_usuario_id: v('prestamista_usuario_id'), garantia_id: pm.variables.replaceIn('{{$guid}}'), estado_garantia: 'CONSTITUIDA', moneda: 'PEN', monto_constituido: 50.00, constituida_en: new Date().toISOString() };",
+                  "const envelope = { event_id: pm.variables.replaceIn('{{$guid}}'), event_type: 'GarantiaConstituida', event_version: 1, aggregate_version: Date.now(), aggregate_id: v('reserva_id'), occurred_at: new Date().toISOString(), correlation_id: 'postman', payload };",
+                  "pm.variables.set('rabbit_body', JSON.stringify({ properties: { content_type: 'application/json' }, routing_key: 'pagos.garantia-constituida.v1', payload: JSON.stringify(envelope), payload_encoding: 'string' }));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Publicado y enrutado a una cola', () => { pm.response.to.have.status(200); pm.expect(pm.response.json().routed).to.eql(true); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "2. Ciclo del préstamo",
+      "item": [
+        {
+          "name": "Cotizar el pago (2 bloques de 24 h = 40.00)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token_prestatario}}"
+              },
+              {
+                "key": "X-Correlation-ID",
+                "value": "postman-{{$guid}}"
+              }
+            ],
+            "url": "{{base_url}}/prestamos/{{prestamo_id}}/cotizacion-pago"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 con importe', () => { pm.response.to.have.status(200); const b = pm.response.json(); pm.expect(b.importe_tarifa).to.eql(40); pm.expect(b.garantia).to.eql(50); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Entregar como prestatario (403)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token_prestatario}}"
+              },
+              {
+                "key": "X-Correlation-ID",
+                "value": "postman-{{$guid}}"
+              }
+            ],
+            "url": "{{base_url}}/prestamos/{{prestamo_id}}/entrega"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// El cambio llega por RabbitMQ: se espera a que se procese.",
+                  "setTimeout(() => {}, 2500);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403', () => { pm.response.to.have.status(403); const b = pm.response.json(); pm.expect(b.error).to.eql('NO_AUTORIZADO'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Registrar la entrega",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token_prestamista}}"
+              },
+              {
+                "key": "X-Correlation-ID",
+                "value": "postman-{{$guid}}"
+              }
+            ],
+            "url": "{{base_url}}/prestamos/{{prestamo_id}}/entrega"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 ENTREGA_REGISTRADA', () => { pm.response.to.have.status(200); const b = pm.response.json(); pm.expect(b.estado).to.eql('ENTREGA_REGISTRADA'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Confirmar la recepción",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token_prestatario}}"
+              },
+              {
+                "key": "X-Correlation-ID",
+                "value": "postman-{{$guid}}"
+              }
+            ],
+            "url": "{{base_url}}/prestamos/{{prestamo_id}}/recepcion"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 ACTIVO', () => { pm.response.to.have.status(200); const b = pm.response.json(); pm.expect(b.estado).to.eql('ACTIVO'); pm.expect(b.activado_en).to.be.a('string'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Cotizar una extensión de 25 horas (2 bloques = 40.00)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token_prestatario}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Correlation-ID",
+                "value": "postman-{{$guid}}"
+              }
+            ],
+            "url": "{{base_url}}/prestamos/{{prestamo_id}}/extensiones/cotizacion",
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"fecha_propuesta_en\": \"{{nueva_fecha}}\" }",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const t = new Date(pm.variables.get('vigente') + 'Z').getTime() + 25 * 3600000;",
+                  "pm.collectionVariables.set('nueva_fecha', new Date(t).toISOString().slice(0, 19));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 CALCULADA', () => { pm.response.to.have.status(200); const b = pm.response.json(); pm.expect(b.costo_adicional).to.eql(40); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Solicitar extensión con un costo distinto (409)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token_prestatario}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Correlation-ID",
+                "value": "postman-{{$guid}}"
+              }
+            ],
+            "url": "{{base_url}}/prestamos/{{prestamo_id}}/extensiones",
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"fecha_propuesta_en\": \"{{nueva_fecha}}\", \"costo_adicional\": 1.00, \"moneda\": \"PEN\" }",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409 con el costo correcto', () => { pm.response.to.have.status(409); const b = pm.response.json(); pm.expect(b.message).to.include('40.00'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Solicitar extensión",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token_prestatario}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Correlation-ID",
+                "value": "postman-{{$guid}}"
+              }
+            ],
+            "url": "{{base_url}}/prestamos/{{prestamo_id}}/extensiones",
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"fecha_propuesta_en\": \"{{nueva_fecha}}\", \"costo_adicional\": 40.00, \"moneda\": \"PEN\" }",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 PENDIENTE', () => { pm.response.to.have.status(201); const b = pm.response.json(); pm.expect(b.estado).to.eql('PENDIENTE'); pm.collectionVariables.set('cambio_id', b.id); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Otra extensión con una en curso (409)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token_prestatario}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Correlation-ID",
+                "value": "postman-{{$guid}}"
+              }
+            ],
+            "url": "{{base_url}}/prestamos/{{prestamo_id}}/extensiones",
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"fecha_propuesta_en\": \"{{nueva_fecha}}\" }",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409', () => { pm.response.to.have.status(409); const b = pm.response.json(); pm.expect(b.message).to.include('en curso'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Aceptar la extensión",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token_prestamista}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Correlation-ID",
+                "value": "postman-{{$guid}}"
+              }
+            ],
+            "url": "{{base_url}}/prestamos/{{prestamo_id}}/extensiones/{{cambio_id}}/respuesta",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"estado\": \"ACEPTADA_PENDIENTE_PAGO\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 pendiente de pago', () => { pm.response.to.have.status(200); const b = pm.response.json(); pm.expect(b.estado).to.eql('ACEPTADA_PENDIENTE_PAGO'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PagoConfirmado - extensión (Pagos)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Correlation-ID",
+                "value": "postman-{{$guid}}"
+              }
+            ],
+            "url": "{{rabbit_url}}/api/exchanges/%2F/lendup.domain.events/publish",
+            "body": {
+              "mode": "raw",
+              "raw": "{{rabbit_body}}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Publica en RabbitMQ (API de administración) un mensaje como el del servicio productor. routed=false significa que nadie escucha en ese broker.",
+            "auth": {
+              "type": "basic",
+              "basic": [
+                {
+                  "key": "username",
+                  "value": "{{rabbit_user}}"
+                },
+                {
+                  "key": "password",
+                  "value": "{{rabbit_pass}}"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const v = (k) => pm.variables.get(k);",
+                  "const payload = { prestamo_id: v('prestamo_id'), reserva_id: v('reserva_id'), prestatario_usuario_id: v('prestatario_usuario_id'), prestamista_usuario_id: v('prestamista_usuario_id'), cambio_fecha_prestamo_id: v('cambio_id'), transaccion_id: pm.variables.replaceIn('{{$guid}}'), tipo: 'PAGO_EXTENSION', estado: 'CONFIRMADA', monto: 40.00, moneda: 'PEN', confirmada_en: new Date().toISOString() };",
+                  "const envelope = { event_id: pm.variables.replaceIn('{{$guid}}'), event_type: 'PagoConfirmado', event_version: 1, aggregate_version: Date.now(), aggregate_id: v('reserva_id'), occurred_at: new Date().toISOString(), correlation_id: 'postman', payload };",
+                  "pm.variables.set('rabbit_body', JSON.stringify({ properties: { content_type: 'application/json' }, routing_key: 'pagos.pago-confirmado.v1', payload: JSON.stringify(envelope), payload_encoding: 'string' }));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Publicado y enrutado a una cola', () => { pm.response.to.have.status(200); pm.expect(pm.response.json().routed).to.eql(true); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Ver la fecha extendida",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token_prestatario}}"
+              },
+              {
+                "key": "X-Correlation-ID",
+                "value": "postman-{{$guid}}"
+              }
+            ],
+            "url": "{{base_url}}/prestamos/{{prestamo_id}}"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// El cambio llega por RabbitMQ: se espera a que se procese.",
+                  "setTimeout(() => {}, 2500);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('La fecha vigente cambió y la original se conserva', () => { pm.response.to.have.status(200); const b = pm.response.json(); pm.expect(b.devolucion_vigente_en).to.eql(pm.variables.get('nueva_fecha')); pm.expect(b.devolucion_original_en).to.eql(pm.variables.get('vigente')); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Historial de cambios de fecha",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token_prestamista}}"
+              },
+              {
+                "key": "X-Correlation-ID",
+                "value": "postman-{{$guid}}"
+              }
+            ],
+            "url": "{{base_url}}/prestamos/{{prestamo_id}}/cambios-fecha"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('1 cambio APLICADA', () => { pm.response.to.have.status(200); const b = pm.response.json(); pm.expect(b.length).to.eql(1); pm.expect(b[0].estado).to.eql('APLICADA'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Proponer reprogramación (prestamista)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token_prestamista}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Correlation-ID",
+                "value": "postman-{{$guid}}"
+              }
+            ],
+            "url": "{{base_url}}/prestamos/{{prestamo_id}}/reprogramaciones",
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"fecha_propuesta_en\": \"{{vigente}}\" }",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 sin costo', () => { pm.response.to.have.status(201); const b = pm.response.json(); pm.expect(b.tipo).to.eql('REPROGRAMACION'); pm.expect(b.costo_adicional).to.eql(undefined); pm.collectionVariables.set('cambio_id', b.id); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Aceptar reprogramación (prestatario)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token_prestatario}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Correlation-ID",
+                "value": "postman-{{$guid}}"
+              }
+            ],
+            "url": "{{base_url}}/prestamos/{{prestamo_id}}/reprogramaciones/{{cambio_id}}/respuesta",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"estado\": \"APLICADA\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 APLICADA', () => { pm.response.to.have.status(200); const b = pm.response.json(); pm.expect(b.estado).to.eql('APLICADA'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Calendario",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token_prestatario}}"
+              },
+              {
+                "key": "X-Correlation-ID",
+                "value": "postman-{{$guid}}"
+              }
+            ],
+            "url": "{{base_url}}/calendario"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 con el préstamo', () => { pm.response.to.have.status(200); const b = pm.response.json(); pm.expect(b.map(x => x.id)).to.include(pm.variables.get('prestamo_id')); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Registrar la devolución",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token_prestatario}}"
+              },
+              {
+                "key": "X-Correlation-ID",
+                "value": "postman-{{$guid}}"
+              }
+            ],
+            "url": "{{base_url}}/prestamos/{{prestamo_id}}/devolucion"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 DEVOLUCION_REGISTRADA', () => { pm.response.to.have.status(200); const b = pm.response.json(); pm.expect(b.estado).to.eql('DEVOLUCION_REGISTRADA'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Confirmar la devolución",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token_prestamista}}"
+              },
+              {
+                "key": "X-Correlation-ID",
+                "value": "postman-{{$guid}}"
+              }
+            ],
+            "url": "{{base_url}}/prestamos/{{prestamo_id}}/confirmacion-devolucion"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 FINALIZADO', () => { pm.response.to.have.status(200); const b = pm.response.json(); pm.expect(b.estado).to.eql('FINALIZADO'); pm.expect(b.finalizado_en).to.be.a('string'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Confirmar otra vez (409)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token_prestamista}}"
+              },
+              {
+                "key": "X-Correlation-ID",
+                "value": "postman-{{$guid}}"
+              }
+            ],
+            "url": "{{base_url}}/prestamos/{{prestamo_id}}/confirmacion-devolucion"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409', () => { pm.response.to.have.status(409); const b = pm.response.json(); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "3. Saga de cancelación",
+      "item": [
+        {
+          "name": "ReservaConfirmada (otra reserva)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Correlation-ID",
+                "value": "postman-{{$guid}}"
+              }
+            ],
+            "url": "{{rabbit_url}}/api/exchanges/%2F/lendup.domain.events/publish",
+            "body": {
+              "mode": "raw",
+              "raw": "{{rabbit_body}}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Publica en RabbitMQ (API de administración) un mensaje como el del servicio productor. routed=false significa que nadie escucha en ese broker.",
+            "auth": {
+              "type": "basic",
+              "basic": [
+                {
+                  "key": "username",
+                  "value": "{{rabbit_user}}"
+                },
+                {
+                  "key": "password",
+                  "value": "{{rabbit_pass}}"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('reserva_id', pm.variables.replaceIn('{{$guid}}'));",
+                  "pm.collectionVariables.set('publicacion_id', pm.variables.replaceIn('{{$guid}}'));",
+                  "const lima = (h) => new Date(Date.now() - 5 * 3600000 + h * 3600000).toISOString().slice(0, 19);",
+                  "const v = (k) => pm.variables.get(k);",
+                  "const payload = { reserva_id: v('reserva_id'), solicitud_id: pm.variables.replaceIn('{{$guid}}'), publicacion_id: v('publicacion_id'), prestamista_usuario_id: v('prestamista_usuario_id'), prestatario_usuario_id: v('prestatario_usuario_id'), desde: lima(-1), hasta: lima(47), tarifa_diaria_acordada: 20.00, garantia_monetaria_acordada: 50.00, moneda_acordada: 'PEN', lugar_intercambio_acordado: 'Campus' };",
+                  "const envelope = { event_id: pm.variables.replaceIn('{{$guid}}'), event_type: 'ReservaConfirmada', event_version: 1, aggregate_version: Date.now(), aggregate_id: v('reserva_id'), occurred_at: new Date().toISOString(), correlation_id: 'postman', payload };",
+                  "pm.variables.set('rabbit_body', JSON.stringify({ properties: { content_type: 'application/json' }, routing_key: 'reservas.confirmada.v1', payload: JSON.stringify(envelope), payload_encoding: 'string' }));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Publicado y enrutado a una cola', () => { pm.response.to.have.status(200); pm.expect(pm.response.json().routed).to.eql(true); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Buscar el segundo préstamo",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token_prestatario}}"
+              },
+              {
+                "key": "X-Correlation-ID",
+                "value": "postman-{{$guid}}"
+              }
+            ],
+            "url": "{{base_url}}/prestamos"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// El cambio llega por RabbitMQ: se espera a que se procese.",
+                  "setTimeout(() => {}, 2500);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Préstamos creó el préstamo en estado RESERVADO', () => { pm.response.to.have.status(200); const p = pm.response.json().find(x => x.reserva_id === pm.variables.get('reserva_id')); pm.expect(p, 'préstamo').to.be.an('object'); pm.expect(p.estado).to.eql('RESERVADO'); pm.collectionVariables.set('prestamo_id', p.id); pm.collectionVariables.set('vigente', p.devolucion_vigente_en); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "CancelacionReservaSolicitada (Reservas)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Correlation-ID",
+                "value": "postman-{{$guid}}"
+              }
+            ],
+            "url": "{{rabbit_url}}/api/exchanges/%2F/lendup.domain.events/publish",
+            "body": {
+              "mode": "raw",
+              "raw": "{{rabbit_body}}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Publica en RabbitMQ (API de administración) un mensaje como el del servicio productor. routed=false significa que nadie escucha en ese broker.",
+            "auth": {
+              "type": "basic",
+              "basic": [
+                {
+                  "key": "username",
+                  "value": "{{rabbit_user}}"
+                },
+                {
+                  "key": "password",
+                  "value": "{{rabbit_pass}}"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const v = (k) => pm.variables.get(k);",
+                  "const payload = { reserva_id: v('reserva_id'), solicitud_id: pm.variables.replaceIn('{{$guid}}'), solicitada_por_usuario_id: v('prestatario_usuario_id'), motivo_cancelacion: 'Ya no lo necesito' };",
+                  "const envelope = { event_id: pm.variables.replaceIn('{{$guid}}'), event_type: 'CancelacionReservaSolicitada', event_version: 1, aggregate_version: Date.now(), aggregate_id: v('reserva_id'), occurred_at: new Date().toISOString(), correlation_id: 'postman', payload };",
+                  "pm.variables.set('rabbit_body', JSON.stringify({ properties: { content_type: 'application/json' }, routing_key: 'reservas.cancelacion-solicitada.v1', payload: JSON.stringify(envelope), payload_encoding: 'string' }));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Publicado y enrutado a una cola', () => { pm.response.to.have.status(200); pm.expect(pm.response.json().routed).to.eql(true); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Ver el préstamo CANCELADO",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token_prestatario}}"
+              },
+              {
+                "key": "X-Correlation-ID",
+                "value": "postman-{{$guid}}"
+              }
+            ],
+            "url": "{{base_url}}/prestamos/{{prestamo_id}}"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// El cambio llega por RabbitMQ: se espera a que se procese.",
+                  "setTimeout(() => {}, 2500);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 CANCELADO', () => { pm.response.to.have.status(200); const b = pm.response.json(); pm.expect(b.estado).to.eql('CANCELADO'); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "4. Seguridad y errores",
+      "item": [
+        {
+          "name": "Sin token (401)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Correlation-ID",
+                "value": "postman-{{$guid}}"
+              }
+            ],
+            "url": "{{base_url}}/prestamos"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 con tildes correctas', () => { pm.response.to.have.status(401); const b = pm.response.json(); pm.expect(b.message).to.eql('Autenticación requerida'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Token inválido (401)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token_invalido}}"
+              },
+              {
+                "key": "X-Correlation-ID",
+                "value": "postman-{{$guid}}"
+              }
+            ],
+            "url": "{{base_url}}/prestamos"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 TOKEN_INVALIDO', () => { pm.response.to.have.status(401); const b = pm.response.json(); pm.expect(b.error).to.eql('TOKEN_INVALIDO'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Préstamo ajeno (403)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token_intruso}}"
+              },
+              {
+                "key": "X-Correlation-ID",
+                "value": "postman-{{$guid}}"
+              }
+            ],
+            "url": "{{base_url}}/prestamos/{{prestamo_id}}",
+            "description": "Necesita el token de un tercer usuario (en modo emulador se genera solo)."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.variables.get('token_intruso')) pm.execution.skipRequest();"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403', () => { pm.response.to.have.status(403); const b = pm.response.json(); pm.expect(b.message).to.include('No participas'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Préstamo inexistente (404)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token_prestatario}}"
+              },
+              {
+                "key": "X-Correlation-ID",
+                "value": "postman-{{$guid}}"
+              }
+            ],
+            "url": "{{base_url}}/prestamos/{{$guid}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404', () => { pm.response.to.have.status(404); const b = pm.response.json(); pm.expect(b.error).to.eql('NO_ENCONTRADO'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Estado inválido (400)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token_prestatario}}"
+              },
+              {
+                "key": "X-Correlation-ID",
+                "value": "postman-{{$guid}}"
+              }
+            ],
+            "url": "{{base_url}}/prestamos?estado=OTRO"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400', () => { pm.response.to.have.status(400); const b = pm.response.json(); pm.expect(b.error).to.eql('SOLICITUD_INVALIDA'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Ruta interna sin credencial de servicio (401)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token_prestatario}}"
+              },
+              {
+                "key": "X-Correlation-ID",
+                "value": "postman-{{$guid}}"
+              }
+            ],
+            "url": "http://localhost:8087/internal/v1/prestamos/reservas/{{reserva_id}}/participantes/{{prestatario_usuario_id}}/contacto"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401', () => { pm.response.to.have.status(401); const b = pm.response.json(); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "5. Broker",
+      "item": [
+        {
+          "name": "Ver eventos en la cola espía",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Correlation-ID",
+                "value": "postman-{{$guid}}"
+              }
+            ],
+            "url": "{{rabbit_url}}/api/queues/%2F/debug.lendup.eventos/get",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"count\": 500,\n  \"ackmode\": \"ack_requeue_true\",\n  \"encoding\": \"auto\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "basic",
+              "basic": [
+                {
+                  "key": "username",
+                  "value": "{{rabbit_user}}"
+                },
+                {
+                  "key": "password",
+                  "value": "{{rabbit_pass}}"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// El cambio llega por RabbitMQ: se espera a que se procese.",
+                  "setTimeout(() => {}, 6000);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const keys = pm.response.json().map(m => m.routing_key);",
+                  "console.log(keys.filter(k => k.startsWith('prestamos.')));",
+                  "pm.test('Préstamos publicó sus eventos', () => { for (const k of ['prestamos.creado.v1', 'prestamos.objeto-entregado.v1', 'prestamos.activado.v1', 'prestamos.extension-aceptada.v1', 'prestamos.devolucion-registrada.v1', 'prestamos.finalizado.v1', 'prestamos.periodo-liberado.v1', 'prestamos.cancelado.v1']) pm.expect(keys, k).to.include(k); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
