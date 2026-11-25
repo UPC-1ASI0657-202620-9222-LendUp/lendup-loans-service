@@ -12,5 +12,5 @@
 - Eventos de cambios de fecha (`ExtensionSolicitada`, `ExtensionRechazada`, `ReprogramacionPropuesta`, `ReprogramacionRechazada`, `FechaDevolucionActualizada`) para avisar a la contraparte y mover los recordatorios (US21, US22, US43).
 - Copia de `PrestamoFinalizado` en el formato que exige Reputación (`REPUTATION_LOAN_FINISHED_ROUTING_KEY`).
 - Pruebas unitarias, de contrato (frontend y eventos), WireMock, Testcontainers (MySQL, RabbitMQ) y escenarios Cucumber en español (US18 a US25, US42 a US45).
-- Diagramas de base de datos, componentes y actividades en `docs/diagrams`.
+- Diagramas de base de datos, componentes, estados, clases y actividades en `docs/diagrams`.
 - Colección Postman, OpenAPI, ADRs y workflows de CI y publicación en Docker Hub.

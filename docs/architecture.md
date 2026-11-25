@@ -12,23 +12,19 @@ Préstamos posee `prestamos`, `cambios_fecha_prestamo`, outbox (`outbox_events`)
 
 | Componente del diagrama | Clase |
 |---|---|
-| Préstamos Controller | `interfaces/rest/LoanController` |
-| Préstamos Application Service | `application/service/LoanApplicationService` |
-| Consulta Préstamos Service | `application/service/LoanQueryService` |
-| Prestamo Aggregate | `domain/model/Prestamo` (con la entidad `CambioFecha`) |
-| Prestamo State | `domain/state/PrestamoState` y sus estados |
-| PoliticaDeCosto | `domain/model/PoliticaDeCosto` (Strategy) |
-| Prestamo Repository | puerto `PrestamoRepository`, adaptador `JpaPrestamoRepositoryAdapter` |
-| Loan Event Recorder | `application/service/LoanEventRecorder` + `OutboxJpaAdapter` + `AuditJpaAdapter` |
-| Outbox Relay | `infrastructure/messaging/OutboxRelay` + `ReputationEventTranslator` |
+| Préstamos Controller | `interfaces/rest/LoanController` e `InternalLoanController` (contrato que ya esperaba Reservas) |
+| Préstamos Service | `application/service/LoanApplicationService` (operaciones) y `LoanQueryService` (consultas) |
 | Préstamo Event Consumer | `infrastructure/messaging/LoanEventConsumer` |
 | Vencimiento Scheduler | `infrastructure/scheduler/OverdueScheduler` |
-| Firebase Authentication Filter y Actor Context | `config/security/FirebaseAuthenticationFilter`, `ActorContext` |
-| Internal Loan Controller | `interfaces/rest/InternalLoanController` (contrato que ya esperaba Reservas) |
-| Identidad REST Adapter | `infrastructure/client/IdentidadRestAdapter` |
-| Evidencias REST Adapter | `infrastructure/client/EvidenciasRestAdapter` (evidencias opcionales del detalle) |
+| Préstamo | `domain/model/Prestamo` con `CambioFecha`, los estados de `domain/state` (State) y `PoliticaDeCosto` (Strategy) |
+| Préstamo Repository | puerto `PrestamoRepository` |
+| Repository Implementation | `JpaPrestamoRepositoryAdapter` |
+| Domain Event Publisher | `application/service/LoanEventRecorder` + `OutboxJpaAdapter` + `AuditJpaAdapter` |
+| RabbitMQ Adapter | `infrastructure/messaging/OutboxRelay` + `ReputationEventTranslator` |
 
-`BusinessClock` (hora de Lima) no se dibuja. El flujo completo está en [diagrams/actividades.png](diagrams/actividades.png).
+Para mantener la vista simple no se dibujan `FirebaseAuthenticationFilter` y `ActorContext` (seguridad), `IdentidadRestAdapter` y `EvidenciasRestAdapter` (clientes REST) ni `BusinessClock` (hora de Lima).
+
+Otros diagramas: [estados](diagrams/estados.png), [clases](diagrams/clases.png) y [actividades](diagrams/actividades.png).
 
 Capas: `domain` (agregado, estados, reglas, sin dependencias de Spring), `application` (casos de uso y puertos), `infrastructure` (JPA/MySQL, RabbitMQ, REST, scheduler) e `interfaces/rest` (DTOs y errores).
 
