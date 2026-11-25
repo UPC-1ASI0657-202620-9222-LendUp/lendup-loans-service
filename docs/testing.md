@@ -9,7 +9,7 @@
 - **Contrato de eventos:** `EmittedEventsContractTest` compara lo que emite el código con `contracts/events/v1` y con lo que exigen Pagos, Notificaciones, Reservas y Reputación; `LoanEventConsumerTest` usa los mismos ejemplos que documentan los productores.
 - **Mensajería:** `OutboxRelayTest`: routing key de cada evento, broker caído, evento sin suscriptores (obligatorio, informativo y que nunca se agota), copia para Reputación y tipo desconocido.
 - **Clientes HTTP:** `RestAdaptersTest` con WireMock (Identidad interna y `/estudiantes/me`, Evidencias opcional, errores y timeout).
-- **Aceptación (Cucumber, Gherkin en español):** US18, US19, US20, US21, US22, US23, US24, US42, US43, US44 y US45. Reporte HTML: `target/cucumber-report.html`.
+- **Aceptación (Cucumber, Gherkin en español):** US18 a US25 y US42 a US45. Reporte HTML: `target/cucumber-report.html`.
 - **Integración `*IT` (failsafe, Testcontainers):**
   - `MySqlLoansIT`: Flyway + `ddl-auto=validate`, ciclo completo por la API, fechas en hora de Lima sin corrimiento, inbox, rollback conjunto, scheduler, entrega y cancelación simultáneas, orden del outbox por préstamo y seguridad.
   - `RabbitMessagingIT`: de `ReservaConfirmada` a `PrestamoCreado`, saga de cancelación, evento que nadie recibe queda pendiente, `PrestamoFinalizado` en el formato estándar y en el de Reputación, y mensaje inválido en la DLQ.

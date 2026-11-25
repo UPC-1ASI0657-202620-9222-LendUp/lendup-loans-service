@@ -4,22 +4,27 @@
 
 Préstamos posee `prestamos`, `cambios_fecha_prestamo`, outbox (`outbox_events`), inbox (`processed_events`) y auditoría (`registro_auditoria`) en su propia base `lendup_prestamos`. Reservas, publicaciones, usuarios y transacciones de pago son referencias externas por UUID: no hay claves foráneas hacia otros servicios ni lecturas de otros esquemas (R13).
 
+![Base de datos](diagrams/base-de-datos.png)
+
 ## Componentes (Fig. 16)
+
+![Componentes](diagrams/componentes.png)
 
 | Componente del diagrama | Clase |
 |---|---|
-| Préstamos Controller | `interfaces/rest/LoanController` |
-| Préstamos Application Service | `application/service/LoanApplicationService` |
-| Consulta Préstamos Service | `application/service/LoanQueryService` |
-| Prestamo Aggregate | `domain/model/Prestamo` (con la entidad `CambioFecha`) |
-| Prestamo State | `domain/state/PrestamoState` y sus estados |
-| PoliticaDeCosto | `domain/model/PoliticaDeCosto` (Strategy) |
-| Prestamo Repository | puerto `PrestamoRepository`, adaptador `JpaPrestamoRepositoryAdapter` |
-| Outbox Event Publisher | `LoanEventRecorder` + `OutboxJpaAdapter` + `infrastructure/messaging/OutboxRelay` |
-| Préstamo Event Consumer (texto) | `infrastructure/messaging/LoanEventConsumer` |
-| Vencimiento Scheduler (texto) | `infrastructure/scheduler/OverdueScheduler` |
+| Préstamos Controller | `interfaces/rest/LoanController` e `InternalLoanController` (contrato que ya esperaba Reservas) |
+| Préstamos Service | `application/service/LoanApplicationService` (operaciones) y `LoanQueryService` (consultas) |
+| Préstamo Event Consumer | `infrastructure/messaging/LoanEventConsumer` |
+| Vencimiento Scheduler | `infrastructure/scheduler/OverdueScheduler` |
+| Préstamo | `domain/model/Prestamo` con `CambioFecha`, los estados de `domain/state` (State) y `PoliticaDeCosto` (Strategy) |
+| Préstamo Repository | puerto `PrestamoRepository` |
+| Repository Implementation | `JpaPrestamoRepositoryAdapter` |
+| Domain Event Publisher | `application/service/LoanEventRecorder` + `OutboxJpaAdapter` + `AuditJpaAdapter` |
+| RabbitMQ Adapter | `infrastructure/messaging/OutboxRelay` + `ReputationEventTranslator` |
 
-Componentes adicionales que no aparecen en la figura: `InternalLoanController` (contrato interno que ya esperaba Reservas), `EvidenciasRestAdapter` (evidencias opcionales del detalle) y `BusinessClock` (hora de Lima).
+Para mantener la vista simple no se dibujan `FirebaseAuthenticationFilter` y `ActorContext` (seguridad), `IdentidadRestAdapter` y `EvidenciasRestAdapter` (clientes REST) ni `BusinessClock` (hora de Lima).
+
+Otros diagramas: [estados](diagrams/estados.png), [clases](diagrams/clases.png) y [actividades](diagrams/actividades.png).
 
 Capas: `domain` (agregado, estados, reglas, sin dependencias de Spring), `application` (casos de uso y puertos), `infrastructure` (JPA/MySQL, RabbitMQ, REST, scheduler) e `interfaces/rest` (DTOs y errores).
 
@@ -73,7 +78,5 @@ Firebase ID token validado en el servicio (revocación y `email_verified`), UID 
 ## Desvíos respecto al informe
 
 - **`PENDIENTE_INCIDENCIA`** (Fig. 9) existe en el dominio y la base, pero la API lo muestra como `DEVOLUCION_REGISTRADA` porque el frontend y el monolito no lo conocen; el valor real va en `estado_detalle`.
-- **Columnas adicionales en `prestamos`:** `garantia_monetaria_acordada` (la cotización la leía de `reservas`, que ahora es de otro servicio) y `version`.
-- **Evento `PrestamoCreado`:** no está en la lista de eventos publicados por Préstamos de la Tabla 19, pero sí en los consumidos por Pagos.
-- **Evento `PeriodoPrestamoLiberado`:** no está en la Tabla 19; es el contrato que Reservas ya consume.
-- Tablas técnicas con los nombres de Reservas (`outbox_events`, `processed_events`) e identificadores `BINARY(16)`.
+- **`garantia_monetaria_acordada`** se guarda en `prestamos` porque la cotización la leía de `reservas`, que ahora es de otro servicio.
+- Los estados y tipos son `VARCHAR` con `CHECK`, no `ENUM`, y los identificadores son `BINARY(16)`.
