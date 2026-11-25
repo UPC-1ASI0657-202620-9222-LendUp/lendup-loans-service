@@ -1,6 +1,11 @@
 # language: es
 Característica: US20 y US44 - Consultar préstamos, vencimiento y calendario
 
+  Escenario: Un participante consulta sus préstamos activos
+    Dado un préstamo activo
+    Cuando el prestatario consulta sus préstamos con estado "ACTIVO"
+    Entonces la lista tiene 1 préstamo
+
   Escenario: Un préstamo vence al llegar su fecha vigente sin devolución
     Dado un préstamo activo
     Cuando llega la fecha vigente de devolución

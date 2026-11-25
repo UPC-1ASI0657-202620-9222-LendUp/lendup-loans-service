@@ -2,12 +2,13 @@ package com.lendup.prestamos.acceptance;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-import com.lendup.prestamos.application.port.in.LoanViews.ExtensionPagadaCommand;
+import com.lendup.prestamos.application.port.in.LoanViews.*;
 import com.lendup.prestamos.domain.model.*;
 import com.lendup.prestamos.support.LoansTestFixture;
 import io.cucumber.java.es.*;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.function.Executable;
 
@@ -19,6 +20,8 @@ public class LoansSteps {
   private LocalDateTime vigenteInicial = LoansTestFixture.HASTA;
   private RuntimeException error;
   private int operaciones;
+  private List<PrestamoView> lista = List.of();
+  private PrestamoView detalle;
 
   private void intentar(Executable accion) {
     error = null;
@@ -34,6 +37,7 @@ public class LoansSteps {
   @Dado("un préstamo activo") public void activo() { prestamo = f.activo(); }
   @Dado("un préstamo vencido") public void vencido() { prestamo = f.vencido(); }
   @Dado("un préstamo con la devolución registrada") public void devuelto() { prestamo = f.devuelto(); }
+  @Dado("un préstamo finalizado") public void finalizado() { prestamo = f.finalizado(); }
   @Dado("Pagos confirma la tarifa") public void tarifa() { f.service.registrarTarifaPagada(prestamo, f.clock.instant(), "bdd"); }
   @Dado("Pagos confirma la garantía") public void garantia() { f.service.registrarGarantiaConstituida(prestamo, f.clock.instant(), "bdd"); }
   @Dado("Evidencias reporta una incidencia") public void incidencia() { f.service.registrarIncidenciaReportada(prestamo, "bdd"); }
@@ -51,6 +55,9 @@ public class LoansSteps {
   @Cuando("llega la fecha vigente de devolución") public void llegaVigente() { f.clock.setLima(f.prestamo(prestamo).devolucionVigenteEn()); f.service.marcarVencidos(10); }
   @Cuando("llega la fecha original de devolución") public void llegaOriginal() { f.clock.setLima(LoansTestFixture.HASTA); f.service.marcarVencidos(10); }
   @Cuando("un estudiante ajeno consulta el préstamo") public void consultaAjena() { intentar(() -> f.queries.detalle(f.intruso, prestamo, "")); }
+  @Cuando("el prestatario consulta sus préstamos con estado {string}") public void lista(String estado) { lista = f.queries.listar(f.prestatario, estado); }
+  @Cuando("un estudiante ajeno consulta sus préstamos con estado {string}") public void listaAjena(String estado) { lista = f.queries.listar(f.intruso, estado); }
+  @Cuando("el prestamista consulta el detalle del préstamo") public void detalle() { detalle = f.queries.detalle(f.prestamista, prestamo, ""); }
   @Cuando("el prestatario consulta su calendario") public void calendario() { operaciones = f.queries.calendario(f.prestatario).size(); }
   @Cuando("un estudiante ajeno consulta su calendario") public void calendarioAjeno() { operaciones = f.queries.calendario(f.intruso).size(); }
   @Cuando("el prestatario solicita extender {int} horas") public void solicitarExtension(int horas) {
@@ -89,5 +96,14 @@ public class LoansSteps {
     assertEquals(vigenteInicial, f.prestamo(prestamo).datos().devolucionOriginalEn(), "la original se conserva");
   }
   @Entonces("el historial tiene {int} cambio de fecha") public void historial(int total) { assertEquals(total, f.queries.cambiosDeFecha(f.prestatario, prestamo).size()); }
+  @Entonces("la lista tiene {int} préstamo") public void lista(int total) { assertEquals(total, lista.size()); assertEquals(prestamo, lista.getFirst().prestamo().id()); }
+  @Entonces("la lista está vacía") public void listaVacia() { assertTrue(lista.isEmpty()); }
+  @Entonces("el detalle muestra participantes, objeto, fechas y estado {string}") public void detalleCompleto(String estado) {
+    Prestamo.Datos d = detalle.prestamo();
+    assertEquals(List.of(f.prestamista, f.prestatario, f.publicacion), List.of(d.prestamistaUsuarioId(), d.prestatarioUsuarioId(), d.publicacionId()));
+    assertEquals(List.of(LoansTestFixture.DESDE, LoansTestFixture.HASTA), List.of(d.entregaProgramadaEn(), d.devolucionOriginalEn()));
+    assertEquals(EstadoPrestamo.valueOf(estado), d.estado());
+    assertNotNull(d.finalizadoEn());
+  }
   @Entonces("ve {int} operación/operaciones programada/programadas") public void operaciones(int total) { assertEquals(total, operaciones); }
 }
