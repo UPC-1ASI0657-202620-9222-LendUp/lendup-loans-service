@@ -17,6 +17,9 @@ public class RabbitConfiguration {
   public static final String PAYMENT_CONFIRMED = "pagos.pago-confirmado.v1";
   public static final String PAYMENT_REJECTED = "pagos.pago-rechazado.v1";
   public static final String GUARANTEE_CONSTITUTED = "pagos.garantia-constituida.v1";
+  public static final String HOLD_CREATED = "reservas.extension-retenida.v1";
+  public static final String HOLD_CONFIRMED = "reservas.extension-ocupacion-confirmada.v1";
+  public static final String HOLD_REJECTED = "reservas.extension-retencion-rechazada.v1";
 
   @Bean TopicExchange domainExchange() { return ExchangeBuilder.topicExchange(EVENTS_EXCHANGE).durable(true).build(); }
   @Bean DirectExchange deadLetterExchange() { return ExchangeBuilder.directExchange(DLX).durable(true).build(); }
@@ -26,7 +29,7 @@ public class RabbitConfiguration {
 
   @Bean Declarables consumedEventBindings(Queue loansEventsQueue, TopicExchange domainExchange, EventRoutingProperties routes) {
     return new Declarables(Stream.of(RESERVATION_CONFIRMED, CANCELLATION_REQUESTED, RESERVATION_CANCELLED, PAYMENT_CONFIRMED, PAYMENT_REJECTED, GUARANTEE_CONSTITUTED,
-            routes.incidentReportedRoutingKey(), routes.incidentResolvedRoutingKey())
+            HOLD_CREATED, HOLD_CONFIRMED, HOLD_REJECTED, routes.incidentReportedRoutingKey(), routes.incidentResolvedRoutingKey())
         .distinct().map(key -> (Declarable) BindingBuilder.bind(loansEventsQueue).to(domainExchange).with(key)).toList());
   }
 }

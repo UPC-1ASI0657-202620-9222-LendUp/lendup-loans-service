@@ -2,6 +2,7 @@ package com.lendup.prestamos.application.port.out;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -10,4 +11,6 @@ import java.util.UUID;
  */
 public interface EvidenciasPort {
   List<Map<String, Object>> evidenciasDelPrestamo(UUID prestamoId, String bearerToken);
+
+  default Optional<List<UUID>> sellarReportes(UUID prestamoId) { return Optional.empty(); }
 }

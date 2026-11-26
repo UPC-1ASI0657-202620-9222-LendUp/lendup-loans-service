@@ -15,6 +15,8 @@ public final class LoanViews {
 
   public record PrestamoView(Prestamo.Datos prestamo, List<CambioFecha.Datos> cambios, List<Map<String, Object>> evidencias) {}
 
+  public record IncidenciasView(UUID id, BigDecimal garantia, String moneda, UUID prestamista, UUID prestatario) {}
+
   public record CambioFechaView(UUID prestamoId, CambioFecha.Datos cambio) {}
 
   public record CotizacionExtensionView(UUID prestamoId, BigDecimal tarifaDiaria, String moneda, LocalDateTime devolucionVigenteEn, LocalDateTime fechaPropuestaEn,

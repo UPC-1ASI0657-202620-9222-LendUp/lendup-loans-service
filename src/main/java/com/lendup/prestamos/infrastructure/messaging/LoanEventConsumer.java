@@ -23,6 +23,8 @@ import tools.jackson.databind.json.JsonMapper;
  */
 @Component
 public class LoanEventConsumer {
+  @org.springframework.beans.factory.annotation.Value("${lendup.guarantees.deferred:false}")
+  private boolean deferredGuarantees;
   private final JsonMapper json;
   private final ProcessedEventJpaRepository processed;
   private final LoanEventUseCases loans;
@@ -65,12 +67,20 @@ public class LoanEventConsumer {
       pagoConfirmado(p, instant(p, "confirmada_en", event), correlationId);
     } else if (RabbitConfiguration.PAYMENT_REJECTED.equals(routingKey)) {
       loans.registrarPagoRechazado(uuid(p, "prestamo_id"), Objects.toString(p.get("tipo"), "PAGO"), correlationId);
+    } else if (RabbitConfiguration.HOLD_CREATED.equals(routingKey)) {
+      loans.registrarResultadoRetencion(uuid(p, "prestamo_id"), uuid(p, "cambio_fecha_prestamo_id"), "RETENIDA", text(p, "expira_en"), correlationId);
+    } else if (RabbitConfiguration.HOLD_CONFIRMED.equals(routingKey)) {
+      loans.registrarResultadoRetencion(uuid(p, "prestamo_id"), uuid(p, "cambio_fecha_prestamo_id"), "CONFIRMADA", "", correlationId);
+    } else if (RabbitConfiguration.HOLD_REJECTED.equals(routingKey)) {
+      loans.registrarResultadoRetencion(uuid(p, "prestamo_id"), uuid(p, "cambio_fecha_prestamo_id"), "RECHAZADA", text(p, "motivo"), correlationId);
     } else if (RabbitConfiguration.GUARANTEE_CONSTITUTED.equals(routingKey)) {
       loans.registrarGarantiaConstituida(uuid(p, "prestamo_id"), instant(p, "constituida_en", event), correlationId);
     } else if (routes.incidentReportedRoutingKey().equals(routingKey)) {
-      loans.registrarIncidenciaReportada(uuid(p, "prestamo_id"), correlationId);
+      if (deferredGuarantees) loans.proyectarIncidencia(uuid(p, "prestamo_id"), uuid(p, "incidencia_id"), false, correlationId);
+      else loans.registrarIncidenciaReportada(uuid(p, "prestamo_id"), correlationId);
     } else if (routes.incidentResolvedRoutingKey().equals(routingKey)) {
-      loans.registrarIncidenciaResuelta(uuid(p, "prestamo_id"), correlationId);
+      if (deferredGuarantees) loans.proyectarIncidencia(uuid(p, "prestamo_id"), uuid(p, "incidencia_id"), true, correlationId);
+      else loans.registrarIncidenciaResuelta(uuid(p, "prestamo_id"), correlationId);
     } else {
       throw new IllegalArgumentException("Routing key no soportada: " + routingKey);
     }

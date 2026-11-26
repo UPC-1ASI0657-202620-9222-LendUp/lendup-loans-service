@@ -8,7 +8,7 @@
   "required": ["event_id", "event_type", "event_version", "aggregate_version", "aggregate_id", "occurred_at", "correlation_id", "payload"],
   "properties": {
     "event_id": { "type": "string", "format": "uuid" },
-    "event_type": { "enum": ["PrestamoCreado", "ObjetoEntregado", "PrestamoActivado", "ExtensionSolicitada", "ExtensionAceptada", "ExtensionRechazada", "ReprogramacionPropuesta", "ReprogramacionRechazada", "FechaDevolucionActualizada", "DevolucionRegistrada", "PrestamoVencido", "PrestamoFinalizado", "PrestamoCancelado", "CancelacionRechazada", "PeriodoPrestamoLiberado"] },
+    "event_type": { "enum": ["PrestamoCreado", "ObjetoEntregado", "PrestamoActivado", "ExtensionSolicitada", "ExtensionAceptada", "ExtensionRechazada", "ReprogramacionPropuesta", "ReprogramacionRechazada", "FechaDevolucionActualizada", "DevolucionRegistrada", "PrestamoVencido", "PrestamoFinalizado", "PrestamoCancelado", "CancelacionRechazada", "PeriodoPrestamoLiberado", "ExtensionRetencionSolicitada", "ExtensionConfirmacionSolicitada", "ExtensionRetencionCancelada", "RecuperacionPendiente"] },
     "event_version": { "const": 1 },
     "aggregate_version": { "type": "integer", "minimum": 1, "description": "Versión del préstamo: crece con cada cambio." },
     "aggregate_id": { "type": "string", "format": "uuid", "description": "prestamo_id" },
@@ -18,6 +18,10 @@
   },
   "allOf": [
     { "properties": { "payload": { "$ref": "#/$defs/base" } } },
+    { "if": { "properties": { "event_type": { "const": "ExtensionRetencionSolicitada" } } }, "then": { "properties": { "payload": { "$ref": "#/$defs/comandoOcupacion" } } } },
+    { "if": { "properties": { "event_type": { "const": "ExtensionConfirmacionSolicitada" } } }, "then": { "properties": { "payload": { "$ref": "#/$defs/comandoOcupacion" } } } },
+    { "if": { "properties": { "event_type": { "const": "ExtensionRetencionCancelada" } } }, "then": { "properties": { "payload": { "$ref": "#/$defs/comandoOcupacion" } } } },
+    { "if": { "properties": { "event_type": { "const": "RecuperacionPendiente" } } }, "then": { "properties": { "payload": { "$ref": "#/$defs/recuperacion" } } } },
     { "if": { "properties": { "event_type": { "const": "PrestamoCreado" } } }, "then": { "properties": { "payload": { "$ref": "#/$defs/creado" } } } },
     { "if": { "properties": { "event_type": { "const": "ObjetoEntregado" } } }, "then": { "properties": { "payload": { "$ref": "#/$defs/entregado" } } } },
     { "if": { "properties": { "event_type": { "const": "PrestamoActivado" } } }, "then": { "properties": { "payload": { "$ref": "#/$defs/activado" } } } },
@@ -35,6 +39,15 @@
     { "if": { "properties": { "event_type": { "const": "PeriodoPrestamoLiberado" } } }, "then": { "properties": { "payload": { "$ref": "#/$defs/periodoLiberado" } } } }
   ],
   "$defs": {
+    "recuperacion": { "type": "object", "required": ["prestamo_id"] },
+    "comandoOcupacion": {
+      "required": ["cambio_fecha_prestamo_id", "fecha_anterior_en", "fecha_propuesta_en"],
+      "properties": {
+        "cambio_fecha_prestamo_id": { "type": "string", "format": "uuid" },
+        "fecha_anterior_en": { "type": "string", "format": "local-date-time" },
+        "fecha_propuesta_en": { "type": "string", "format": "local-date-time" }
+      }
+    },
     "base": {
       "type": "object",
       "required": ["prestamo_id", "reserva_id", "publicacion_id", "prestatario_usuario_id", "prestamista_usuario_id"],
@@ -83,13 +96,16 @@
       "required": ["cambio_fecha_prestamo_id", "costo_adicional", "moneda", "fecha_propuesta_en"],
       "properties": {
         "cambio_fecha_prestamo_id": { "type": "string", "format": "uuid" }, "costo_adicional": { "type": "number", "exclusiveMinimum": 0 },
-        "moneda": { "type": "string", "pattern": "^[A-Z]{3}$" }, "fecha_propuesta_en": { "type": "string", "format": "local-date-time" }
+        "moneda": { "type": "string", "pattern": "^[A-Z]{3}$" }, "fecha_propuesta_en": { "type": "string", "format": "local-date-time" },
+        "retencion_expira_en": { "type": "string", "format": "date-time" }
       }
     },
     "devolucionRegistrada": { "required": ["devolucion_registrada_en"], "properties": { "devolucion_registrada_en": { "type": "string", "format": "date-time" } } },
     "vencido": { "required": ["vencido_en", "devolucion_vigente_en"], "properties": { "vencido_en": { "type": "string", "format": "date-time" }, "devolucion_vigente_en": { "type": "string", "format": "local-date-time" } } },
-    "finalizado": { "required": ["finalizado_en"], "properties": { "finalizado_en": { "type": "string", "format": "date-time" } } },
-    "cancelado": { "required": ["cancelado_en"], "properties": { "cancelado_en": { "type": "string", "format": "date-time" } } },
+    "finalizado": { "required": ["finalizado_en"], "properties": { "finalizado_en": { "type": "string", "format": "date-time" },
+      "incidencias_resueltas": { "type": "array", "uniqueItems": true, "items": { "type": "string", "format": "uuid" } } } },
+    "cancelado": { "required": ["cancelado_en"], "properties": { "cancelado_en": { "type": "string", "format": "date-time" },
+      "incidencias_resueltas": { "type": "array", "uniqueItems": true, "items": { "type": "string", "format": "uuid" } } } },
     "cancelacionRechazada": { "required": ["motivo"], "properties": { "motivo": { "type": "string" } } },
     "periodoLiberado": {
       "description": "Contrato de Reservas (loan-events.schema.json): solo se emite si la devolución se confirmó antes del fin del periodo.",

@@ -7,6 +7,7 @@ import com.github.tomakehurst.wiremock.WireMockServer;
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
 import com.lendup.prestamos.application.exception.*;
 import com.lendup.prestamos.config.IntegrationProperties;
+import com.lendup.prestamos.domain.exception.ReglaDeNegocioException;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.*;
@@ -25,7 +26,7 @@ class RestAdaptersTest {
   }
 
   private EvidenciasRestAdapter evidencias(String template) {
-    return new EvidenciasRestAdapter(new IntegrationProperties(null, new IntegrationProperties.Evidence(server.baseUrl(), template, 500, 500)));
+    return new EvidenciasRestAdapter(new IntegrationProperties(null, new IntegrationProperties.Evidence(server.baseUrl(), template, "", false, 1000, 2000)));
   }
 
   @Test void contratoInternoDeIdentidadConTokenDeServicio() {
@@ -57,5 +58,19 @@ class RestAdaptersTest {
     server.resetAll();
     server.stubFor(get(anyUrl()).willReturn(serverError()));
     assertEquals(List.of(), evidencias("/prestamos/{id}/evidencias").evidenciasDelPrestamo(prestamo, "t"), "caído");
+  }
+
+  @Test void cierreUsaCredencialPrivadaYFallaCerrado() {
+    String secret = "credencial-exclusiva-de-prueba-para-cierre";
+    var adapter = new EvidenciasRestAdapter(new IntegrationProperties(null,
+        new IntegrationProperties.Evidence(server.baseUrl(), "/prestamos/{id}/evidencias", secret, true, 1000, 2000)));
+    var route = "/internal/v1/prestamos/" + prestamo + "/cierre-incidencias";
+    var incident = UUID.randomUUID();
+    server.stubFor(post(route).withHeader("Authorization", equalTo("Bearer " + secret)).willReturn(okJson("[\"" + incident + "\"]")));
+    assertEquals(List.of(incident), adapter.sellarReportes(prestamo).orElseThrow());
+    server.stubFor(post(route).willReturn(aResponse().withStatus(409)));
+    assertThrows(ReglaDeNegocioException.class, () -> adapter.sellarReportes(prestamo));
+    server.stubFor(post(route).willReturn(serverError()));
+    assertThrows(DependencyUnavailableException.class, () -> adapter.sellarReportes(prestamo));
   }
 }
