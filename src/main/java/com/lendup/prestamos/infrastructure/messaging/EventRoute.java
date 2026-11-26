@@ -14,6 +14,9 @@ public enum EventRoute {
   ACTIVADO(PrestamoEvento.ACTIVADO, "prestamos.activado.v1", true),
   EXTENSION_SOLICITADA(PrestamoEvento.EXTENSION_SOLICITADA, "prestamos.extension-solicitada.v1", false),
   EXTENSION_ACEPTADA(PrestamoEvento.EXTENSION_ACEPTADA, "prestamos.extension-aceptada.v1", true),
+  EXTENSION_RETENCION_SOLICITADA(PrestamoEvento.EXTENSION_RETENCION_SOLICITADA, "prestamos.extension-retencion-solicitada.v1", true),
+  EXTENSION_CONFIRMACION_SOLICITADA(PrestamoEvento.EXTENSION_CONFIRMACION_SOLICITADA, "prestamos.extension-confirmacion-solicitada.v1", true),
+  EXTENSION_RETENCION_CANCELADA(PrestamoEvento.EXTENSION_RETENCION_CANCELADA, "prestamos.extension-retencion-cancelada.v1", true),
   EXTENSION_RECHAZADA(PrestamoEvento.EXTENSION_RECHAZADA, "prestamos.extension-rechazada.v1", false),
   REPROGRAMACION_PROPUESTA(PrestamoEvento.REPROGRAMACION_PROPUESTA, "prestamos.reprogramacion-propuesta.v1", false),
   REPROGRAMACION_RECHAZADA(PrestamoEvento.REPROGRAMACION_RECHAZADA, "prestamos.reprogramacion-rechazada.v1", false),
@@ -23,6 +26,7 @@ public enum EventRoute {
   FINALIZADO(PrestamoEvento.FINALIZADO, "prestamos.finalizado.v1", true),
   CANCELADO(PrestamoEvento.CANCELADO, "prestamos.cancelado.v1", true),
   CANCELACION_RECHAZADA(PrestamoEvento.CANCELACION_RECHAZADA, "prestamos.cancelacion-rechazada.v1", true),
+  RECUPERACION_PENDIENTE(PrestamoEvento.RECUPERACION_PENDIENTE, "prestamos.recuperacion-pendiente.v1", false),
   PERIODO_LIBERADO(PrestamoEvento.PERIODO_LIBERADO, "prestamos.periodo-liberado.v1", true);
 
   private final String eventType;

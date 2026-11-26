@@ -35,6 +35,12 @@ public class LoansSteps {
   @Dado("un préstamo listo para entregar") public void listo() { prestamo = f.listoParaEntregar(); f.clock.setLima(LoansTestFixture.DESDE); }
   @Dado("un préstamo con la entrega registrada") public void entregado() { prestamo = f.entregado(); }
   @Dado("un préstamo activo") public void activo() { prestamo = f.activo(); }
+  @Dado("la coordinación de extensiones está activa") public void usaRetenciones() {
+    org.springframework.test.util.ReflectionTestUtils.setField(f.service, "coordinatedExtensions", true);
+  }
+  @Dado("la cancelación admite confirmación de recuperación") public void usaRecuperacion() {
+    org.springframework.test.util.ReflectionTestUtils.setField(f.service, "cancellationRecovery", true);
+  }
   @Dado("un préstamo vencido") public void vencido() { prestamo = f.vencido(); }
   @Dado("un préstamo con la devolución registrada") public void devuelto() { prestamo = f.devuelto(); }
   @Dado("un préstamo finalizado") public void finalizado() { prestamo = f.finalizado(); }
@@ -72,6 +78,15 @@ public class LoansSteps {
   @Cuando("el prestatario acepta la reprogramación") public void aceptarReprogramacion() { intentar(() -> f.service.responderReprogramacion(f.prestatario, prestamo, cambio, "APLICADA", null, "bdd")); }
   @Cuando("el prestatario rechaza la reprogramación") public void rechazarReprogramacion() { intentar(() -> f.service.responderReprogramacion(f.prestatario, prestamo, cambio, "RECHAZADA", null, "bdd")); }
   @Cuando("Reservas solicita cancelar la reserva") public void cancelar() { f.service.decidirCancelacion(f.prestamo(prestamo).reservaId(), "bdd"); }
+  @Cuando("Reservas confirma la retención vigente") public void retenida() {
+    f.service.registrarResultadoRetencion(prestamo, cambio, "RETENIDA", f.clock.instant().plusSeconds(60).toString(), "bdd");
+  }
+  @Cuando("Reservas consolida la ocupación de la extensión") public void consolidada() {
+    f.service.registrarResultadoRetencion(prestamo, cambio, "CONFIRMADA", "", "bdd");
+  }
+  @Cuando("el prestamista confirma que recuperó el objeto") public void recuperacion() {
+    intentar(() -> f.service.confirmarRecuperacion(f.prestamista, prestamo, "bdd"));
+  }
 
   @Entonces("la operación se rechaza con {string}") public void rechazo(String mensaje) { assertNotNull(error, "La operación no se rechazó"); assertEquals(mensaje, error.getMessage()); }
   @Entonces("el préstamo queda en estado {string}") public void estado(String esperado) {

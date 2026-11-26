@@ -117,13 +117,20 @@ public final class Prestamo {
 
   /** @param ahoraLocal hora de negocio (America/Lima), para saber si se devolvió antes del fin del periodo reservado. */
   public void confirmarDevolucion(UUID actor, Instant now, LocalDateTime ahoraLocal) {
+    confirmarDevolucion(actor, now, ahoraLocal, null);
+  }
+
+  public void confirmarDevolucion(UUID actor, Instant now, LocalDateTime ahoraLocal, List<UUID> incidenciasResueltas) {
     exigirPrestamista(actor);
     EstadoPrestamo siguiente = state().confirmarDevolucion();
     if (incidenciasPendientes > 0) throw new ReglaDeNegocioException("Devolución o incidencias pendientes");
     estado = siguiente; devolucionConfirmadaEn = now; finalizadoEn = now;
     actualizar(now);
-    registrarEvento(PrestamoEvento.FINALIZADO, Map.of("finalizado_en", now));
-    if (ahoraLocal.isAfter(entregaProgramadaEn) && ahoraLocal.isBefore(devolucionOriginalEn)) {
+    var cierre = new LinkedHashMap<String, Object>();
+    cierre.put("finalizado_en", now);
+    if (incidenciasResueltas != null) cierre.put("incidencias_resueltas", incidenciasResueltas);
+    registrarEvento(PrestamoEvento.FINALIZADO, cierre);
+    if (ahoraLocal.isAfter(entregaProgramadaEn) && ahoraLocal.isBefore(devolucionVigenteEn)) {
       // Devolución anticipada: Reservas acorta el periodo ocupado (contrato prestamos.periodo-liberado.v1).
       registrarEvento(PrestamoEvento.PERIODO_LIBERADO, Map.of("nuevo_hasta", ahoraLocal.truncatedTo(ChronoUnit.SECONDS), "decision", "LIBERACION_CONFIRMADA",
           "devolucion_confirmada_por_prestamista", true, "incidencias_pendientes", false));
@@ -161,16 +168,80 @@ public final class Prestamo {
   }
 
   public CambioFecha responderExtension(UUID cambioId, UUID actor, boolean aceptar, String motivo, Instant now, LocalDateTime ahoraLocal) {
+    return responderExtension(cambioId, actor, aceptar, motivo, now, ahoraLocal, false);
+  }
+
+  public CambioFecha responderExtension(UUID cambioId, UUID actor, boolean aceptar, String motivo, Instant now,
+      LocalDateTime ahoraLocal, boolean coordinada) {
     exigirPrestamista(actor);
     CambioFecha cambio = cambio(cambioId, TipoCambioFecha.EXTENSION);
     cambio.exigirPendiente();
     if (!aceptar) return rechazar(cambio, actor, motivo, now, PrestamoEvento.EXTENSION_RECHAZADA);
     exigirCambioDeFecha(ahoraLocal);
+    if (coordinada) {
+      cambio.esperarRetencion(actor, now);
+      enviarComandoOcupacion(PrestamoEvento.EXTENSION_RETENCION_SOLICITADA, cambio, now);
+      return cambio;
+    }
     cambio.aceptarPendienteDePago(actor, now);
     actualizar(now);
     registrarEvento(PrestamoEvento.EXTENSION_ACEPTADA, Map.of("cambio_fecha_prestamo_id", cambio.id(), "costo_adicional", cambio.costoAdicional(), "moneda", moneda,
         "fecha_propuesta_en", cambio.fechaPropuestaEn()));
     return cambio;
+  }
+
+  public boolean habilitarPagoExtension(UUID cambioId, Instant expiraEn, Instant now) {
+    CambioFecha cambio = cambio(cambioId, TipoCambioFecha.EXTENSION);
+    if (cambio.estado() != EstadoCambioFecha.ACEPTADA_PENDIENTE_RETENCION || !now.isBefore(expiraEn)) return false;
+    cambio.habilitarPago();
+    actualizar(now);
+    registrarEvento(PrestamoEvento.EXTENSION_ACEPTADA, Map.of("cambio_fecha_prestamo_id", cambio.id(),
+        "costo_adicional", cambio.costoAdicional(), "moneda", moneda, "fecha_propuesta_en", cambio.fechaPropuestaEn(),
+        "retencion_expira_en", expiraEn.toString()));
+    return true;
+  }
+
+  public boolean solicitarConfirmacionOcupacion(UUID cambioId, UUID transaccionId, Instant pagadoEn, Instant now) {
+    CambioFecha cambio = cambio(cambioId, TipoCambioFecha.EXTENSION);
+    if (cambio.estado() != EstadoCambioFecha.ACEPTADA_PENDIENTE_PAGO
+        || (estado != EstadoPrestamo.ACTIVO && estado != EstadoPrestamo.VENCIDO)) return false;
+    cambio.esperarOcupacion(Objects.requireNonNull(transaccionId), pagadoEn);
+    enviarComandoOcupacion(PrestamoEvento.EXTENSION_CONFIRMACION_SOLICITADA, cambio, now);
+    return true;
+  }
+
+  public boolean confirmarOcupacionExtension(UUID cambioId, Instant now, LocalDateTime ahoraLocal) {
+    CambioFecha cambio = cambio(cambioId, TipoCambioFecha.EXTENSION);
+    if (cambio.estado() != EstadoCambioFecha.PAGADA_PENDIENTE_OCUPACION) return false;
+    return aplicarExtension(cambio, cambio.datos().transaccionPagoId(), cambio.datos().pagoConfirmadoEn(), now, ahoraLocal);
+  }
+
+  public boolean rechazarRetencionExtension(UUID cambioId, String motivo, Instant now) {
+    CambioFecha cambio = cambio(cambioId, TipoCambioFecha.EXTENSION);
+    if (cambio.estado() == EstadoCambioFecha.PENDIENTE || !cambio.estado().enCurso()) return false;
+    cambio.rechazarRetencion(motivo);
+    actualizar(now);
+    registrarEvento(PrestamoEvento.EXTENSION_RECHAZADA, Map.of("cambio_fecha_prestamo_id", cambioId, "motivo_rechazo", motivo));
+    return true;
+  }
+
+  public void desistirRetencionesPorDevolucion(Instant now) {
+    if (cambios.stream().anyMatch(c -> c.estado() == EstadoCambioFecha.PAGADA_PENDIENTE_OCUPACION)) {
+      throw new ReglaDeNegocioException("La extensión pagada espera confirmación de ocupación");
+    }
+    for (CambioFecha cambio : cambios) {
+      if (cambio.estado() == EstadoCambioFecha.ACEPTADA_PENDIENTE_RETENCION
+          || cambio.estado() == EstadoCambioFecha.ACEPTADA_PENDIENTE_PAGO) {
+        enviarComandoOcupacion(PrestamoEvento.EXTENSION_RETENCION_CANCELADA, cambio, now);
+        rechazarRetencionExtension(cambio.id(), "DEVOLUCION_REGISTRADA", now);
+      }
+    }
+  }
+
+  private void enviarComandoOcupacion(String tipo, CambioFecha cambio, Instant now) {
+    actualizar(now);
+    registrarEvento(tipo, Map.of("cambio_fecha_prestamo_id", cambio.id(), "fecha_anterior_en",
+        cambio.datos().fechaAnteriorEn(), "fecha_propuesta_en", cambio.fechaPropuestaEn()));
   }
 
   public CambioFecha proponerReprogramacion(UUID cambioId, UUID actor, LocalDateTime fechaPropuesta, Instant now, LocalDateTime ahoraLocal) {
@@ -207,6 +278,10 @@ public final class Prestamo {
   public boolean aplicarExtensionPagada(UUID cambioId, UUID transaccionId, Instant pagadoEn, Instant now, LocalDateTime ahoraLocal) {
     CambioFecha cambio = cambio(cambioId, TipoCambioFecha.EXTENSION);
     if (cambio.estado() != EstadoCambioFecha.ACEPTADA_PENDIENTE_PAGO || (estado != EstadoPrestamo.ACTIVO && estado != EstadoPrestamo.VENCIDO)) return false;
+    return aplicarExtension(cambio, transaccionId, pagadoEn, now, ahoraLocal);
+  }
+
+  private boolean aplicarExtension(CambioFecha cambio, UUID transaccionId, Instant pagadoEn, Instant now, LocalDateTime ahoraLocal) {
     estado = state().aplicarNuevaFecha(cambio.fechaPropuestaEn().isAfter(ahoraLocal));
     if (estado == EstadoPrestamo.ACTIVO) vencidoEn = null;
     cambio.pagar(transaccionId, pagadoEn, now);
@@ -235,6 +310,17 @@ public final class Prestamo {
    * pedido sobre un préstamo ya cancelado vuelve a informar la cancelación (idempotente para Reservas).
    */
   public boolean decidirCancelacion(Instant now) {
+    return decidirCancelacion(now, false);
+  }
+
+  public boolean decidirCancelacion(Instant now, boolean admiteRecuperacion) {
+    if (estado == EstadoPrestamo.RECUPERACION_PENDIENTE) return false;
+    if (admiteRecuperacion && estado == EstadoPrestamo.ENTREGA_REGISTRADA) {
+      estado = EstadoPrestamo.RECUPERACION_PENDIENTE;
+      actualizar(now);
+      registrarEvento(PrestamoEvento.RECUPERACION_PENDIENTE, Map.of());
+      return false;
+    }
     if (estado == EstadoPrestamo.RESERVADO) {
       estado = state().cancelar();
       canceladoEn = now;
@@ -244,8 +330,21 @@ public final class Prestamo {
       registrarEvento(PrestamoEvento.CANCELADO, Map.of("cancelado_en", canceladoEn));
       return true;
     }
-    registrarEvento(PrestamoEvento.CANCELACION_RECHAZADA, Map.of("motivo", "El objeto ya fue entregado"));
+    registrarEvento(PrestamoEvento.CANCELACION_RECHAZADA, Map.of("motivo",
+        admiteRecuperacion ? "La recepción ya fue confirmada" : "El objeto ya fue entregado"));
     return false;
+  }
+
+  public void confirmarRecuperacion(UUID actor, Instant now) {
+    exigirPrestamista(actor);
+    if (estado == EstadoPrestamo.CANCELADO && entregaRegistradaEn != null) return;
+    if (estado != EstadoPrestamo.RECUPERACION_PENDIENTE || incidenciasPendientes > 0) {
+      throw new ReglaDeNegocioException("La recuperación no está pendiente o quedan incidencias abiertas");
+    }
+    estado = EstadoPrestamo.CANCELADO;
+    canceladoEn = now;
+    actualizar(now);
+    registrarEvento(PrestamoEvento.CANCELADO, Map.of("cancelado_en", canceladoEn));
   }
 
   /** La reserva se canceló por fuera de la saga: solo tiene efecto si el préstamo no ha iniciado. */

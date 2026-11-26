@@ -66,6 +66,26 @@ public final class CambioFecha {
     estado = EstadoCambioFecha.ACEPTADA_PENDIENTE_PAGO; respondidoPorUsuarioId = actor; respondidoEn = now;
   }
 
+  void esperarRetencion(UUID actor, Instant now) {
+    exigirPendiente();
+    estado = EstadoCambioFecha.ACEPTADA_PENDIENTE_RETENCION;
+    respondidoPorUsuarioId = actor;
+    respondidoEn = now;
+  }
+
+  void habilitarPago() { estado = EstadoCambioFecha.ACEPTADA_PENDIENTE_PAGO; }
+
+  void esperarOcupacion(UUID transaccion, Instant pagadoEn) {
+    estado = EstadoCambioFecha.PAGADA_PENDIENTE_OCUPACION;
+    transaccionPagoId = transaccion;
+    pagoConfirmadoEn = pagadoEn;
+  }
+
+  void rechazarRetencion(String motivo) {
+    estado = EstadoCambioFecha.RECHAZADA;
+    motivoRechazo = motivo;
+  }
+
   void aceptarSinCosto(UUID actor, Instant now) {
     exigirPendiente();
     respondidoPorUsuarioId = actor; respondidoEn = now;

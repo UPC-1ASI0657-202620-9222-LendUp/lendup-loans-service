@@ -171,6 +171,35 @@ class MySqlLoansIT {
     }
   }
 
+  @Test void recepcionYCancelacionSeSerializanSinActivarUnObjetoEnRecuperacion() throws Exception {
+    org.springframework.test.util.ReflectionTestUtils.setField(loans, "cancellationRecovery", true);
+    try {
+      UUID id = listo();
+      loans.registrarEntrega(prestamista, id, "it");
+      try (ExecutorService pool = Executors.newFixedThreadPool(2)) {
+        var start = new CountDownLatch(1);
+        var receipt = pool.submit(() -> {
+          start.await();
+          try {
+            loans.confirmarRecepcion(prestatario, id, "it");
+            return true;
+          } catch (com.lendup.prestamos.domain.exception.ReglaDeNegocioException expected) {
+            return false;
+          }
+        });
+        var cancellation = pool.submit(() -> { start.await(); loans.decidirCancelacion(reserva, "it"); return true; });
+        start.countDown();
+        boolean accepted = receipt.get(15, TimeUnit.SECONDS);
+        assertTrue(cancellation.get(15, TimeUnit.SECONDS));
+        assertEquals(accepted ? EstadoPrestamo.ACTIVO : EstadoPrestamo.RECUPERACION_PENDIENTE,
+            repository.findById(id).orElseThrow().estado());
+        assertTrue(eventos().contains(accepted ? "CancelacionRechazada" : "RecuperacionPendiente"));
+      }
+    } finally {
+      org.springframework.test.util.ReflectionTestUtils.setField(loans, "cancellationRecovery", false);
+    }
+  }
+
   @Test void elOutboxRespetaElOrdenPorPrestamo() {
     UUID id = listo();
     loans.registrarEntrega(prestamista, id, "it");
