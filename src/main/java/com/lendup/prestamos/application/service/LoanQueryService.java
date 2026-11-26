@@ -29,7 +29,7 @@ public class LoanQueryService implements LoanQueryUseCases {
 
   @Override
   public List<PrestamoView> listar(UUID actor, String estado) {
-    return repository.findByParticipante(actor, estados(estado)).stream().map(p -> vista(p, List.of())).toList();
+    return repository.findByParticipante(actor, estados(estado)).stream().map(p -> vista(p, null)).toList();
   }
 
   /** Sin transacción: la consulta de evidencias es una llamada remota y no debe retener una conexión a la base. */
@@ -42,7 +42,7 @@ public class LoanQueryService implements LoanQueryUseCases {
   @Override
   public List<PrestamoView> calendario(UUID actor) {
     return repository.findByParticipante(actor, EN_CALENDARIO).stream()
-        .sorted(Comparator.comparing((Prestamo p) -> p.datos().entregaProgramadaEn())).map(p -> vista(p, List.of())).toList();
+        .sorted(Comparator.comparing((Prestamo p) -> p.datos().entregaProgramadaEn())).map(p -> vista(p, null)).toList();
   }
 
   @Override
@@ -70,10 +70,31 @@ public class LoanQueryService implements LoanQueryUseCases {
     return repository.findByReserva(reservaId).orElseThrow(() -> new NotFoundException("Préstamo no encontrado para la reserva")).contactoVigentePara(usuarioId);
   }
 
+  @Override
+  public IncidenciasView datosParaIncidencias(UUID prestamoId) {
+    Prestamo.Datos datos = buscar(prestamoId).datos();
+    return new IncidenciasView(datos.id(), datos.garantiaMonetariaAcordada(), datos.moneda(),
+        datos.prestamistaUsuarioId(), datos.prestatarioUsuarioId());
+  }
+
+  @Override @Transactional
+  public boolean admiteReportes(UUID prestamoId) {
+    return repository.lock(prestamoId).orElseThrow(() -> new NotFoundException("Préstamo no encontrado")).estado().abierto();
+  }
+
+  @Override
+  public PrestamoView datosDelParticipante(UUID actor, UUID prestamoId) {
+    return vista(delParticipante(actor, prestamoId), null);
+  }
+
   private Prestamo delParticipante(UUID actor, UUID prestamoId) {
-    Prestamo prestamo = repository.findById(prestamoId).orElseThrow(() -> new NotFoundException("Préstamo no encontrado"));
+    Prestamo prestamo = buscar(prestamoId);
     prestamo.exigirParticipante(actor);
     return prestamo;
+  }
+
+  private Prestamo buscar(UUID prestamoId) {
+    return repository.findById(prestamoId).orElseThrow(() -> new NotFoundException("Préstamo no encontrado"));
   }
 
   /** El filtro usa los estados que ve el frontend: DEVOLUCION_REGISTRADA incluye PENDIENTE_INCIDENCIA. */

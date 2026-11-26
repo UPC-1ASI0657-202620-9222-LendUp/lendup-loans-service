@@ -39,9 +39,11 @@ import tools.jackson.databind.json.JsonMapper;
 @ActiveProfiles("test")
 @Import(TestAuthConfiguration.class)
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.MOCK, properties = {"spring.rabbitmq.listener.simple.auto-startup=false", "firebase.project-id=test",
-    "lendup.outbox.relay-delay-ms=3600000", "lendup.overdue.check-delay-ms=3600000", "lendup.security.reservations-service-token=" + MySqlLoansIT.SERVICE_TOKEN})
+    "lendup.outbox.relay-delay-ms=3600000", "lendup.overdue.check-delay-ms=3600000", "lendup.security.reservations-service-token=" + MySqlLoansIT.SERVICE_TOKEN,
+    "lendup.security.evidence-service-token=" + MySqlLoansIT.EVIDENCE_TOKEN})
 class MySqlLoansIT {
   static final String SERVICE_TOKEN = "token-de-servicio-de-prueba-con-mas-de-32-caracteres";
+  static final String EVIDENCE_TOKEN = "credencial-exclusiva-para-evidencias-de-prueba";
   @Container static final MySQLContainer mysql = new MySQLContainer("mysql:8.4").withDatabaseName("lendup_prestamos").withUsername("test").withPassword("test");
 
   @DynamicPropertySource static void properties(DynamicPropertyRegistry r) {
@@ -88,11 +90,40 @@ class MySqlLoansIT {
   @Test void cicloCompletoPorLaApi() throws Exception {
     UUID id = activo();
     accion("prestatario", id, "devolucion").andExpect(status().isOk()).andExpect(jsonPath("$.estado").value("DEVOLUCION_REGISTRADA"));
-    accion("prestamista", id, "confirmacion-devolucion").andExpect(status().isOk()).andExpect(jsonPath("$.estado").value("FINALIZADO"));
+    String confirmado = accion("prestamista", id, "confirmacion-devolucion")
+        .andExpect(status().isOk()).andExpect(jsonPath("$.estado").value("FINALIZADO"))
+        .andReturn().getResponse().getContentAsString();
+    accion("prestamista", id, "confirmacion-devolucion").andExpect(status().isOk())
+        .andExpect(jsonPath("$.devolucion_confirmada_en").value(json.readTree(confirmado).get("devolucion_confirmada_en").asString()));
     assertEquals(List.of("PrestamoCreado", "ObjetoEntregado", "PrestamoActivado", "DevolucionRegistrada"), eventos().subList(0, 4));
     assertTrue(eventos().containsAll(List.of("PrestamoFinalizado", "PeriodoPrestamoLiberado")));
+    assertEquals(1L, eventos().stream().filter("PrestamoFinalizado"::equals).count());
     mvc.perform(get("/api/v1/prestamos").param("estado", "FINALIZADO").header("Authorization", "Bearer prestatario")).andExpect(status().isOk()).andExpect(jsonPath("$[0].id").value(id.toString()));
     assertEquals(7, jdbc.queryForObject("select count(*) from registro_auditoria where aggregate_id=uuid_to_bin(?)", Integer.class, id.toString()));
+  }
+
+  @Test void contratoPrivadoDistingueGarantiaPersistidaDeGarantiaDesconocida() throws Exception {
+    UUID id = crear();
+    var ruta = "/internal/v1/prestamos/{id}/incidencias";
+    var response = mvc.perform(get(ruta, id).header("Authorization", "Bearer " + EVIDENCE_TOKEN))
+        .andExpect(status().isOk()).andExpect(jsonPath("$.garantia_monetaria_acordada").value(50))
+        .andExpect(jsonPath("$.moneda").value("PEN")).andExpect(jsonPath("$.id").value(id.toString()))
+        .andExpect(jsonPath("$.prestamista_usuario_id").value(prestamista.toString()))
+        .andExpect(jsonPath("$.prestatario_usuario_id").value(prestatario.toString()))
+        .andReturn().getResponse();
+    assertEquals(5, json.readTree(response.getContentAsString()).size());
+    mvc.perform(get(ruta, id).header("Authorization", "Bearer " + SERVICE_TOKEN)).andExpect(status().isForbidden());
+    mvc.perform(get(ruta, id).header("Authorization", "Bearer prestamista")).andExpect(status().isUnauthorized());
+    mvc.perform(get(ruta, UUID.randomUUID()).header("Authorization", "Bearer " + EVIDENCE_TOKEN)).andExpect(status().isNotFound());
+    mvc.perform(get("/internal/v1/prestamos/reservas/{r}/participantes/{p}/contacto", reserva, prestamista)
+        .header("Authorization", "Bearer " + EVIDENCE_TOKEN)).andExpect(status().isForbidden());
+
+    var reservaAnterior = UUID.randomUUID();
+    loans.crearDesdeReserva(new ReservaConfirmadaCommand(reservaAnterior, publicacion, prestamista, prestatario,
+        desde, hasta, new BigDecimal("20.00"), null, "PEN"), "it");
+    var sinDato = mvc.perform(get(ruta, repository.findByReserva(reservaAnterior).orElseThrow().id())
+        .header("Authorization", "Bearer " + EVIDENCE_TOKEN)).andExpect(status().isOk()).andReturn().getResponse();
+    assertTrue(json.readTree(sinDato.getContentAsString()).get("garantia_monetaria_acordada").isNull());
   }
 
   @Test void lasFechasPactadasConservanLaHoraDeLima() throws Exception {
