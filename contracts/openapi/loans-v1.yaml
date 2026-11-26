@@ -210,7 +210,7 @@ components:
         creado_en: { type: string, format: date-time }
         actualizado_en: { type: string, format: date-time }
         cambios_fecha: { type: array, items: { $ref: '#/components/schemas/CambioFecha' } }
-        evidencias: { type: array, items: { type: object }, description: 'De Evidencias e Incidencias; vacío si no está configurado o no responde' }
+        evidencias: { type: array, items: { type: object }, description: 'Colección de Evidencias e Incidencias en el detalle del préstamo' }
     CambioFecha:
       type: object
       required: [id, prestamo_id, tipo, estado, propuesto_por_usuario_id, fecha_anterior_en, fecha_propuesta_en, propuesto_en]

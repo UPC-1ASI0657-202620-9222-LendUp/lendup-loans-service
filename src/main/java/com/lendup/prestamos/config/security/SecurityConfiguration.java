@@ -6,6 +6,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.annotation.Order;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
@@ -20,10 +21,19 @@ public class SecurityConfiguration {
   /** Rutas servicio a servicio: credencial propia, sin Firebase y sin CORS. No deben publicarse en el API Gateway. */
   @Bean
   @Order(1)
-  SecurityFilterChain internalSecurity(HttpSecurity http, @Value("${lendup.security.reservations-service-token:}") String serviceToken) throws Exception {
+  SecurityFilterChain internalSecurity(HttpSecurity http,
+      @Value("${lendup.security.reservations-service-token:}") String reservationsToken,
+      @Value("${lendup.security.evidence-service-token:}") String evidenceToken) throws Exception {
     return stateless(http.securityMatcher("/internal/**"))
-        .authorizeHttpRequests(authorize -> authorize.anyRequest().hasRole("SERVICIO"))
-        .addFilterBefore(new InternalServiceTokenFilter(serviceToken), UsernamePasswordAuthenticationFilter.class)
+        .exceptionHandling(errors -> errors
+            .accessDeniedHandler((request, response, exception) -> JsonErrorWriter.write(response, 403, "NO_AUTORIZADO", "No autorizado")))
+        .authorizeHttpRequests(authorize -> authorize
+            .requestMatchers(HttpMethod.GET, "/internal/v1/prestamos/reservas/*/participantes/*/contacto").hasAuthority("LOANS_CONTACT")
+            .requestMatchers(HttpMethod.GET, "/internal/v1/prestamos/*/incidencias",
+                "/internal/v1/prestamos/*/participantes/*",
+                "/internal/v1/prestamos/*/admision-incidencias").hasAuthority("LOANS_INCIDENTS")
+            .anyRequest().denyAll())
+        .addFilterBefore(new InternalServiceTokenFilter(reservationsToken, evidenceToken), UsernamePasswordAuthenticationFilter.class)
         .build();
   }
 

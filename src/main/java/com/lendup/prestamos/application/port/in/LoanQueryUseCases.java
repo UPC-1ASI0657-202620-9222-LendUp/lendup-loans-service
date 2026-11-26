@@ -16,4 +16,8 @@ public interface LoanQueryUseCases {
 
   /** Contrato interno con Reservas: si el contacto entre participantes sigue vigente (RF52). */
   boolean contactoVigente(UUID reservaId, UUID usuarioId);
+
+  IncidenciasView datosParaIncidencias(UUID prestamoId);
+  boolean admiteReportes(UUID prestamoId);
+  PrestamoView datosDelParticipante(UUID actor, UUID prestamoId);
 }

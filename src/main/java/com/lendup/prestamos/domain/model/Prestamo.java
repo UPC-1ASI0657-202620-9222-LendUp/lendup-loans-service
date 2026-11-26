@@ -121,10 +121,7 @@ public final class Prestamo {
   }
 
   public void confirmarDevolucion(UUID actor, Instant now, LocalDateTime ahoraLocal, List<UUID> incidenciasResueltas) {
-    exigirPrestamista(actor);
-    EstadoPrestamo siguiente = state().confirmarDevolucion();
-    if (incidenciasPendientes > 0) throw new ReglaDeNegocioException("Devolución o incidencias pendientes");
-    estado = siguiente; devolucionConfirmadaEn = now; finalizadoEn = now;
+    estado = exigirDevolucionConfirmable(actor); devolucionConfirmadaEn = now; finalizadoEn = now;
     actualizar(now);
     var cierre = new LinkedHashMap<String, Object>();
     cierre.put("finalizado_en", now);
@@ -135,6 +132,18 @@ public final class Prestamo {
       registrarEvento(PrestamoEvento.PERIODO_LIBERADO, Map.of("nuevo_hasta", ahoraLocal.truncatedTo(ChronoUnit.SECONDS), "decision", "LIBERACION_CONFIRMADA",
           "devolucion_confirmada_por_prestamista", true, "incidencias_pendientes", false));
     }
+  }
+
+  public EstadoPrestamo exigirDevolucionConfirmable(UUID actor) {
+    exigirPrestamista(actor);
+    EstadoPrestamo siguiente = state().confirmarDevolucion();
+    if (incidenciasPendientes > 0) throw new ReglaDeNegocioException("Devolución o incidencias pendientes");
+    return siguiente;
+  }
+
+  public boolean devolucionConfirmadaPor(UUID actor) {
+    exigirPrestamista(actor);
+    return estado == EstadoPrestamo.FINALIZADO && devolucionConfirmadaEn != null;
   }
 
   /** RF53: vence si llegó la fecha vigente sin devolución. Devuelve false si todavía no corresponde. */
@@ -314,6 +323,10 @@ public final class Prestamo {
   }
 
   public boolean decidirCancelacion(Instant now, boolean admiteRecuperacion) {
+    return decidirCancelacion(now, admiteRecuperacion, null);
+  }
+
+  public boolean decidirCancelacion(Instant now, boolean admiteRecuperacion, List<UUID> incidenciasResueltas) {
     if (estado == EstadoPrestamo.RECUPERACION_PENDIENTE) return false;
     if (admiteRecuperacion && estado == EstadoPrestamo.ENTREGA_REGISTRADA) {
       estado = EstadoPrestamo.RECUPERACION_PENDIENTE;
@@ -327,7 +340,7 @@ public final class Prestamo {
     }
     actualizar(now);
     if (estado == EstadoPrestamo.CANCELADO) {
-      registrarEvento(PrestamoEvento.CANCELADO, Map.of("cancelado_en", canceladoEn));
+      registrarCancelacion(incidenciasResueltas);
       return true;
     }
     registrarEvento(PrestamoEvento.CANCELACION_RECHAZADA, Map.of("motivo",
@@ -336,15 +349,36 @@ public final class Prestamo {
   }
 
   public void confirmarRecuperacion(UUID actor, Instant now) {
-    exigirPrestamista(actor);
-    if (estado == EstadoPrestamo.CANCELADO && entregaRegistradaEn != null) return;
-    if (estado != EstadoPrestamo.RECUPERACION_PENDIENTE || incidenciasPendientes > 0) {
-      throw new ReglaDeNegocioException("La recuperación no está pendiente o quedan incidencias abiertas");
-    }
+    confirmarRecuperacion(actor, now, null);
+  }
+
+  public void confirmarRecuperacion(UUID actor, Instant now, List<UUID> incidenciasResueltas) {
+    if (!exigirRecuperacionConfirmable(actor)) return;
     estado = EstadoPrestamo.CANCELADO;
     canceladoEn = now;
     actualizar(now);
-    registrarEvento(PrestamoEvento.CANCELADO, Map.of("cancelado_en", canceladoEn));
+    registrarCancelacion(incidenciasResueltas);
+  }
+
+  public boolean exigirRecuperacionConfirmable(UUID actor) {
+    exigirPrestamista(actor);
+    if (estado == EstadoPrestamo.CANCELADO && entregaRegistradaEn != null) return false;
+    if (estado != EstadoPrestamo.RECUPERACION_PENDIENTE || incidenciasPendientes > 0) {
+      throw new ReglaDeNegocioException("La recuperación no está pendiente o quedan incidencias abiertas");
+    }
+    return true;
+  }
+
+  public void rechazarCancelacionPorIncidencias(Instant now) {
+    actualizar(now);
+    registrarEvento(PrestamoEvento.CANCELACION_RECHAZADA, Map.of("motivo", "Quedan incidencias abiertas"));
+  }
+
+  private void registrarCancelacion(List<UUID> incidenciasResueltas) {
+    var cierre = new LinkedHashMap<String, Object>();
+    cierre.put("cancelado_en", canceladoEn);
+    if (incidenciasResueltas != null) cierre.put("incidencias_resueltas", incidenciasResueltas);
+    registrarEvento(PrestamoEvento.CANCELADO, cierre);
   }
 
   /** La reserva se canceló por fuera de la saga: solo tiene efecto si el préstamo no ha iniciado. */

@@ -104,7 +104,8 @@
     "vencido": { "required": ["vencido_en", "devolucion_vigente_en"], "properties": { "vencido_en": { "type": "string", "format": "date-time" }, "devolucion_vigente_en": { "type": "string", "format": "local-date-time" } } },
     "finalizado": { "required": ["finalizado_en"], "properties": { "finalizado_en": { "type": "string", "format": "date-time" },
       "incidencias_resueltas": { "type": "array", "uniqueItems": true, "items": { "type": "string", "format": "uuid" } } } },
-    "cancelado": { "required": ["cancelado_en"], "properties": { "cancelado_en": { "type": "string", "format": "date-time" } } },
+    "cancelado": { "required": ["cancelado_en"], "properties": { "cancelado_en": { "type": "string", "format": "date-time" },
+      "incidencias_resueltas": { "type": "array", "uniqueItems": true, "items": { "type": "string", "format": "uuid" } } } },
     "cancelacionRechazada": { "required": ["motivo"], "properties": { "motivo": { "type": "string" } } },
     "periodoLiberado": {
       "description": "Contrato de Reservas (loan-events.schema.json): solo se emite si la devolución se confirmó antes del fin del periodo.",

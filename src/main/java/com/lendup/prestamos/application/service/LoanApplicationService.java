@@ -5,11 +5,16 @@ import com.lendup.prestamos.application.port.in.LoanEventUseCases;
 import com.lendup.prestamos.application.port.in.LoanUseCases;
 import com.lendup.prestamos.application.port.in.LoanViews.*;
 import com.lendup.prestamos.application.port.out.PrestamoRepository;
+import com.lendup.prestamos.application.port.out.EvidenciasPort;
 import com.lendup.prestamos.domain.exception.ReglaDeNegocioException;
 import com.lendup.prestamos.domain.model.*;
+import jakarta.annotation.PostConstruct;
 import java.math.BigDecimal;
 import java.time.*;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
+import java.util.Optional;
+import java.util.TreeSet;
 import java.util.UUID;
 import java.util.function.BiConsumer;
 import org.slf4j.Logger;
@@ -30,8 +35,12 @@ public class LoanApplicationService implements LoanUseCases, LoanEventUseCases {
   private boolean cancellationRecovery;
   @org.springframework.beans.factory.annotation.Value("${lendup.guarantees.deferred:false}")
   private boolean deferredGuarantees;
+  @org.springframework.beans.factory.annotation.Value("${lendup.integrations.evidence.coordinate-closure:false}")
+  private boolean evidenceClosure;
   @org.springframework.beans.factory.annotation.Autowired
   private com.lendup.prestamos.application.port.out.LoanIncidentProjection incidentProjection;
+  @org.springframework.beans.factory.annotation.Autowired
+  private EvidenciasPort evidencias;
   private static final Logger log = LoggerFactory.getLogger(LoanApplicationService.class);
   private final PrestamoRepository repository;
   private final LoanEventRecorder recorder;
@@ -42,6 +51,13 @@ public class LoanApplicationService implements LoanUseCases, LoanEventUseCases {
   public LoanApplicationService(PrestamoRepository repository, LoanEventRecorder recorder, PoliticaDeCosto politica, BusinessClock clock,
                                 TransactionOperations newTransaction) {
     this.repository = repository; this.recorder = recorder; this.politica = politica; this.clock = clock; this.newTransaction = newTransaction;
+  }
+
+  @PostConstruct
+  void verificarConfiguracionDeCierre() {
+    if (evidenceClosure && !deferredGuarantees) {
+      throw new IllegalStateException("El cierre con Evidencias requiere garantías diferidas");
+    }
   }
 
   // ---- Operaciones de los participantes -------------------------------------------------------------------------
@@ -66,13 +82,29 @@ public class LoanApplicationService implements LoanUseCases, LoanEventUseCases {
 
   @Override @Transactional
   public PrestamoView confirmarDevolucion(UUID actor, UUID prestamoId, String correlationId) {
-    return operar(actor, prestamoId, "CONFIRMAR_DEVOLUCION", correlationId, (p, now) ->
-        p.confirmarDevolucion(actor, now, clock.ahoraLocal(), deferredGuarantees ? incidentProjection.resolved(p.id()) : null));
+    Prestamo prestamo = bloquear(prestamoId);
+    if (prestamo.devolucionConfirmadaPor(actor)) return vistaOperacion(prestamo);
+    prestamo.exigirDevolucionConfirmable(actor);
+    var resueltas = incidenciasParaCierre(prestamo.id(), true);
+    String anterior = prestamo.estado().name();
+    prestamo.confirmarDevolucion(actor, clock.instant().truncatedTo(ChronoUnit.MICROS), clock.ahoraLocal(), resueltas);
+    recorder.guardar(prestamo, "CONFIRMAR_DEVOLUCION", anterior, actor, correlationId);
+    return vistaOperacion(prestamo);
+  }
+
+  private List<UUID> incidenciasParaCierre(UUID prestamoId, boolean cierreOrdinario) {
+    var registradas = evidencias == null ? Optional.<List<UUID>>empty() : evidencias.sellarReportes(prestamoId);
+    if (!deferredGuarantees || (registradas.isEmpty() && !cierreOrdinario)) return null;
+    var resueltas = new TreeSet<>(registradas.orElseGet(List::of));
+    resueltas.addAll(incidentProjection.resolved(prestamoId));
+    return List.copyOf(resueltas);
   }
 
   @Override @Transactional
   public PrestamoView confirmarRecuperacion(UUID actor, UUID prestamoId, String correlationId) {
-    return operar(actor, prestamoId, "CONFIRMAR_RECUPERACION", correlationId, (p, now) -> p.confirmarRecuperacion(actor, now));
+    return operar(actor, prestamoId, "CONFIRMAR_RECUPERACION", correlationId, (p, now) -> {
+      if (p.exigirRecuperacionConfirmable(actor)) p.confirmarRecuperacion(actor, now, incidenciasParaCierre(p.id(), false));
+    });
   }
 
   @Override @Transactional
@@ -141,7 +173,16 @@ public class LoanApplicationService implements LoanUseCases, LoanEventUseCases {
   public void decidirCancelacion(UUID reservaId, String correlationId) {
     Prestamo prestamo = bloquearPorReserva(reservaId);
     String anterior = prestamo.estado().name();
-    boolean cancelado = prestamo.decidirCancelacion(clock.instant(), cancellationRecovery);
+    Instant now = clock.instant();
+    List<UUID> resueltas;
+    try {
+      resueltas = prestamo.estado() == EstadoPrestamo.RESERVADO ? incidenciasParaCierre(prestamo.id(), false) : null;
+    } catch (ReglaDeNegocioException e) {
+      prestamo.rechazarCancelacionPorIncidencias(now);
+      recorder.guardar(prestamo, "RECHAZAR_CANCELACION", anterior, null, correlationId);
+      return;
+    }
+    boolean cancelado = prestamo.decidirCancelacion(now, cancellationRecovery, resueltas);
     if (prestamo.estado() == EstadoPrestamo.RECUPERACION_PENDIENTE) {
       recorder.guardar(prestamo, "ESPERAR_RECUPERACION", anterior, null, correlationId);
       return;
@@ -256,7 +297,11 @@ public class LoanApplicationService implements LoanUseCases, LoanEventUseCases {
     String anterior = prestamo.estado().name();
     operacion.accept(prestamo, clock.instant());
     recorder.guardar(prestamo, accion, anterior, actor, correlationId);
-    return new PrestamoView(prestamo.datos(), prestamo.cambios().stream().map(CambioFecha::datos).toList(), List.of());
+    return vistaOperacion(prestamo);
+  }
+
+  private PrestamoView vistaOperacion(Prestamo prestamo) {
+    return new PrestamoView(prestamo.datos(), prestamo.cambios().stream().map(CambioFecha::datos).toList(), null);
   }
 
   private interface Reaccion { boolean aplicar(Prestamo prestamo, Instant now); }
