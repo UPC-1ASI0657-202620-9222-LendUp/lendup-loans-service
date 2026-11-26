@@ -41,7 +41,21 @@ class EmittedEventsContractTest {
     f.service.decidirCancelacion(f.prestamo(f.reservado()).reservaId(), "c");
     f.finalizado();
     f.vencido();
-    for (EventEnvelope e : f.eventos) emitidos.put(e.eventType(), json.readTree(json.writeValueAsString(e.payload())));
+    for (EventEnvelope e : f.eventos) emitidos.putIfAbsent(e.eventType(), json.readTree(json.writeValueAsString(e.payload())));
+    f = new LoansTestFixture();
+    org.springframework.test.util.ReflectionTestUtils.setField(f.service, "coordinatedExtensions", true);
+    org.springframework.test.util.ReflectionTestUtils.setField(f.service, "cancellationRecovery", true);
+    UUID coordinado = f.activo();
+    UUID retenido = f.service.solicitarExtension(f.prestatario, coordinado, LoansTestFixture.HASTA.plusDays(1), null, "c").cambio().id();
+    f.service.responderExtension(f.prestamista, coordinado, retenido, "ACEPTADA_PENDIENTE_PAGO", null, "c");
+    f.service.registrarResultadoRetencion(coordinado, retenido, "RETENIDA", f.clock.instant().plusSeconds(300).toString(), "c");
+    f.service.registrarExtensionPagada(new ExtensionPagadaCommand(coordinado, retenido, UUID.randomUUID(), f.clock.instant()), "c");
+    UUID otro = f.activo();
+    UUID desistido = f.service.solicitarExtension(f.prestatario, otro, LoansTestFixture.HASTA.plusDays(2), null, "c").cambio().id();
+    f.service.responderExtension(f.prestamista, otro, desistido, "ACEPTADA_PENDIENTE_PAGO", null, "c");
+    f.service.registrarDevolucion(f.prestatario, otro, "c");
+    f.service.decidirCancelacion(f.prestamo(f.entregado()).reservaId(), "c");
+    for (EventEnvelope e : f.eventos) emitidos.putIfAbsent(e.eventType(), json.readTree(json.writeValueAsString(e.payload())));
   }
 
   @ParameterizedTest @EnumSource(EventRoute.class)

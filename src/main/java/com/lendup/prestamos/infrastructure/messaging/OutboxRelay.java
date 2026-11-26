@@ -17,6 +17,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -42,7 +43,7 @@ public class OutboxRelay {
   }
 
   @Scheduled(fixedDelayString = "${lendup.outbox.relay-delay-ms:1000}")
-  @Transactional
+  @Transactional(isolation = Isolation.READ_COMMITTED)
   public void relay() {
     for (OutboxEventEntity e : repository.pending(clock.instant(), maxAttempts, PageRequest.of(0, 50))) {
       try {

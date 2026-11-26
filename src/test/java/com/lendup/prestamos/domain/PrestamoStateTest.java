@@ -54,9 +54,10 @@ class PrestamoStateTest {
     assertEquals(ACTIVO, PrestamoState.de(ACTIVO).reportarIncidencia());
   }
 
-  @Test void elFrontendNoVeElEstadoInternoDeIncidencia() {
+  @Test void elFrontendNoVeEstadosInternosSinContratoPublico() {
     assertEquals(DEVOLUCION_REGISTRADA, PENDIENTE_INCIDENCIA.publico());
-    EnumSet.complementOf(EnumSet.of(PENDIENTE_INCIDENCIA)).forEach(e -> assertEquals(e, e.publico()));
+    assertEquals(ENTREGA_REGISTRADA, RECUPERACION_PENDIENTE.publico());
+    EnumSet.complementOf(EnumSet.of(PENDIENTE_INCIDENCIA, RECUPERACION_PENDIENTE)).forEach(e -> assertEquals(e, e.publico()));
   }
 
   private static void verificar(EstadoPrestamo estado, Map<EstadoPrestamo, EstadoPrestamo> permitidas, Function<PrestamoState, EstadoPrestamo> accion) {

@@ -11,6 +11,7 @@ public interface LoanUseCases {
   PrestamoView confirmarRecepcion(UUID actor, UUID prestamoId, String correlationId);
   PrestamoView registrarDevolucion(UUID actor, UUID prestamoId, String correlationId);
   PrestamoView confirmarDevolucion(UUID actor, UUID prestamoId, String correlationId);
+  PrestamoView confirmarRecuperacion(UUID actor, UUID prestamoId, String correlationId);
 
   /** @param costoInformado costo que se le mostró al usuario; si no coincide con el calculado se rechaza. Puede ser nulo. */
   CambioFechaView solicitarExtension(UUID actor, UUID prestamoId, LocalDateTime fechaPropuesta, BigDecimal costoInformado, String correlationId);

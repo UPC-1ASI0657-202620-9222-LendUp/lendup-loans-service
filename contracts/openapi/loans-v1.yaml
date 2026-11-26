@@ -52,6 +52,16 @@ paths:
         '200': { $ref: '#/components/responses/Prestamo' }
         '403': { $ref: '#/components/responses/Error' }
         '409': { $ref: '#/components/responses/Error' }
+  /prestamos/{id}/confirmacion-recuperacion:
+    parameters: [{ $ref: '#/components/parameters/PrestamoId' }]
+    post:
+      operationId: confirmarRecuperacion
+      tags: [Préstamos]
+      description: El prestamista confirma la recuperación antes de cancelar. Requiere estado_detalle RECUPERACION_PENDIENTE.
+      responses:
+        '200': { $ref: '#/components/responses/Prestamo' }
+        '403': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
   /prestamos/{id}/devolucion:
     parameters: [{ $ref: '#/components/parameters/PrestamoId' }]
     post:
@@ -200,7 +210,7 @@ components:
         creado_en: { type: string, format: date-time }
         actualizado_en: { type: string, format: date-time }
         cambios_fecha: { type: array, items: { $ref: '#/components/schemas/CambioFecha' } }
-        evidencias: { type: array, items: { type: object }, description: 'De Evidencias e Incidencias; vacío si no está configurado o no responde' }
+        evidencias: { type: array, items: { type: object }, description: 'Colección de Evidencias e Incidencias en el detalle del préstamo' }
     CambioFecha:
       type: object
       required: [id, prestamo_id, tipo, estado, propuesto_por_usuario_id, fecha_anterior_en, fecha_propuesta_en, propuesto_en]
@@ -208,7 +218,7 @@ components:
         id: { type: string, format: uuid }
         prestamo_id: { type: string, format: uuid }
         tipo: { type: string, enum: [EXTENSION, REPROGRAMACION] }
-        estado: { type: string, enum: [PENDIENTE, RECHAZADA, ACEPTADA_PENDIENTE_PAGO, APLICADA] }
+        estado: { type: string, enum: [PENDIENTE, RECHAZADA, ACEPTADA_PENDIENTE_RETENCION, ACEPTADA_PENDIENTE_PAGO, PAGADA_PENDIENTE_OCUPACION, APLICADA] }
         propuesto_por_usuario_id: { type: string, format: uuid }
         fecha_anterior_en: { $ref: '#/components/schemas/FechaLocal' }
         fecha_propuesta_en: { $ref: '#/components/schemas/FechaLocal' }

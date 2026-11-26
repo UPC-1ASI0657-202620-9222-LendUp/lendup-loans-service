@@ -5,11 +5,16 @@ import com.lendup.prestamos.application.port.in.LoanEventUseCases;
 import com.lendup.prestamos.application.port.in.LoanUseCases;
 import com.lendup.prestamos.application.port.in.LoanViews.*;
 import com.lendup.prestamos.application.port.out.PrestamoRepository;
+import com.lendup.prestamos.application.port.out.EvidenciasPort;
 import com.lendup.prestamos.domain.exception.ReglaDeNegocioException;
 import com.lendup.prestamos.domain.model.*;
+import jakarta.annotation.PostConstruct;
 import java.math.BigDecimal;
 import java.time.*;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
+import java.util.Optional;
+import java.util.TreeSet;
 import java.util.UUID;
 import java.util.function.BiConsumer;
 import org.slf4j.Logger;
@@ -24,6 +29,18 @@ import org.springframework.transaction.support.TransactionOperations;
  */
 @Service
 public class LoanApplicationService implements LoanUseCases, LoanEventUseCases {
+  @org.springframework.beans.factory.annotation.Value("${lendup.extensions.coordinated:false}")
+  private boolean coordinatedExtensions;
+  @org.springframework.beans.factory.annotation.Value("${lendup.cancellations.recovery:false}")
+  private boolean cancellationRecovery;
+  @org.springframework.beans.factory.annotation.Value("${lendup.guarantees.deferred:false}")
+  private boolean deferredGuarantees;
+  @org.springframework.beans.factory.annotation.Value("${lendup.integrations.evidence.coordinate-closure:false}")
+  private boolean evidenceClosure;
+  @org.springframework.beans.factory.annotation.Autowired
+  private com.lendup.prestamos.application.port.out.LoanIncidentProjection incidentProjection;
+  @org.springframework.beans.factory.annotation.Autowired
+  private EvidenciasPort evidencias;
   private static final Logger log = LoggerFactory.getLogger(LoanApplicationService.class);
   private final PrestamoRepository repository;
   private final LoanEventRecorder recorder;
@@ -34,6 +51,13 @@ public class LoanApplicationService implements LoanUseCases, LoanEventUseCases {
   public LoanApplicationService(PrestamoRepository repository, LoanEventRecorder recorder, PoliticaDeCosto politica, BusinessClock clock,
                                 TransactionOperations newTransaction) {
     this.repository = repository; this.recorder = recorder; this.politica = politica; this.clock = clock; this.newTransaction = newTransaction;
+  }
+
+  @PostConstruct
+  void verificarConfiguracionDeCierre() {
+    if (evidenceClosure && !deferredGuarantees) {
+      throw new IllegalStateException("El cierre con Evidencias requiere garantías diferidas");
+    }
   }
 
   // ---- Operaciones de los participantes -------------------------------------------------------------------------
@@ -50,12 +74,37 @@ public class LoanApplicationService implements LoanUseCases, LoanEventUseCases {
 
   @Override @Transactional
   public PrestamoView registrarDevolucion(UUID actor, UUID prestamoId, String correlationId) {
-    return operar(actor, prestamoId, "REGISTRAR_DEVOLUCION", correlationId, (p, now) -> p.registrarDevolucion(actor, now));
+    return operar(actor, prestamoId, "REGISTRAR_DEVOLUCION", correlationId, (p, now) -> {
+      p.registrarDevolucion(actor, now);
+      if (coordinatedExtensions) p.desistirRetencionesPorDevolucion(now);
+    });
   }
 
   @Override @Transactional
   public PrestamoView confirmarDevolucion(UUID actor, UUID prestamoId, String correlationId) {
-    return operar(actor, prestamoId, "CONFIRMAR_DEVOLUCION", correlationId, (p, now) -> p.confirmarDevolucion(actor, now, clock.ahoraLocal()));
+    Prestamo prestamo = bloquear(prestamoId);
+    if (prestamo.devolucionConfirmadaPor(actor)) return vistaOperacion(prestamo);
+    prestamo.exigirDevolucionConfirmable(actor);
+    var resueltas = incidenciasParaCierre(prestamo.id(), true);
+    String anterior = prestamo.estado().name();
+    prestamo.confirmarDevolucion(actor, clock.instant().truncatedTo(ChronoUnit.MICROS), clock.ahoraLocal(), resueltas);
+    recorder.guardar(prestamo, "CONFIRMAR_DEVOLUCION", anterior, actor, correlationId);
+    return vistaOperacion(prestamo);
+  }
+
+  private List<UUID> incidenciasParaCierre(UUID prestamoId, boolean cierreOrdinario) {
+    var registradas = evidencias == null ? Optional.<List<UUID>>empty() : evidencias.sellarReportes(prestamoId);
+    if (!deferredGuarantees || (registradas.isEmpty() && !cierreOrdinario)) return null;
+    var resueltas = new TreeSet<>(registradas.orElseGet(List::of));
+    resueltas.addAll(incidentProjection.resolved(prestamoId));
+    return List.copyOf(resueltas);
+  }
+
+  @Override @Transactional
+  public PrestamoView confirmarRecuperacion(UUID actor, UUID prestamoId, String correlationId) {
+    return operar(actor, prestamoId, "CONFIRMAR_RECUPERACION", correlationId, (p, now) -> {
+      if (p.exigirRecuperacionConfirmable(actor)) p.confirmarRecuperacion(actor, now, incidenciasParaCierre(p.id(), false));
+    });
   }
 
   @Override @Transactional
@@ -78,8 +127,9 @@ public class LoanApplicationService implements LoanUseCases, LoanEventUseCases {
     Prestamo prestamo = bloquear(prestamoId);
     prestamo.exigirParticipante(actor);
     String anterior = prestamo.estado().name();
-    CambioFecha cambio = prestamo.responderExtension(exigirCambio(prestamo, cambioId, TipoCambioFecha.EXTENSION), actor, aceptar, motivo, clock.instant(), clock.ahoraLocal());
-    if (aceptar) exigirSinSuperposicion(prestamo, prestamo.devolucionVigenteEn(), cambio.fechaPropuestaEn());
+    CambioFecha cambio = prestamo.responderExtension(exigirCambio(prestamo, cambioId, TipoCambioFecha.EXTENSION),
+        actor, aceptar, motivo, clock.instant(), clock.ahoraLocal(), coordinatedExtensions);
+    if (aceptar && !coordinatedExtensions) exigirSinSuperposicion(prestamo, prestamo.devolucionVigenteEn(), cambio.fechaPropuestaEn());
     recorder.guardar(prestamo, aceptar ? "ACEPTAR_EXTENSION" : "RECHAZAR_EXTENSION", anterior, actor, correlationId);
     return new CambioFechaView(prestamoId, cambio.datos());
   }
@@ -123,7 +173,20 @@ public class LoanApplicationService implements LoanUseCases, LoanEventUseCases {
   public void decidirCancelacion(UUID reservaId, String correlationId) {
     Prestamo prestamo = bloquearPorReserva(reservaId);
     String anterior = prestamo.estado().name();
-    boolean cancelado = prestamo.decidirCancelacion(clock.instant());
+    Instant now = clock.instant();
+    List<UUID> resueltas;
+    try {
+      resueltas = prestamo.estado() == EstadoPrestamo.RESERVADO ? incidenciasParaCierre(prestamo.id(), false) : null;
+    } catch (ReglaDeNegocioException e) {
+      prestamo.rechazarCancelacionPorIncidencias(now);
+      recorder.guardar(prestamo, "RECHAZAR_CANCELACION", anterior, null, correlationId);
+      return;
+    }
+    boolean cancelado = prestamo.decidirCancelacion(now, cancellationRecovery, resueltas);
+    if (prestamo.estado() == EstadoPrestamo.RECUPERACION_PENDIENTE) {
+      recorder.guardar(prestamo, "ESPERAR_RECUPERACION", anterior, null, correlationId);
+      return;
+    }
     recorder.guardar(prestamo, cancelado ? "CANCELAR" : "RECHAZAR_CANCELACION", anterior, null, correlationId);
   }
 
@@ -149,13 +212,30 @@ public class LoanApplicationService implements LoanUseCases, LoanEventUseCases {
     Prestamo prestamo = bloquear(c.prestamoId());
     String anterior = prestamo.estado().name();
     exigirCambio(prestamo, c.cambioFechaId(), TipoCambioFecha.EXTENSION);
-    if (prestamo.aplicarExtensionPagada(c.cambioFechaId(), c.transaccionId(), c.pagadoEn(), clock.instant(), clock.ahoraLocal())) {
+    boolean changed = coordinatedExtensions
+        ? prestamo.solicitarConfirmacionOcupacion(c.cambioFechaId(), c.transaccionId(), c.pagadoEn(), clock.instant())
+        : prestamo.aplicarExtensionPagada(c.cambioFechaId(), c.transaccionId(), c.pagadoEn(), clock.instant(), clock.ahoraLocal());
+    if (changed) {
       recorder.guardar(prestamo, "APLICAR_EXTENSION_PAGADA", anterior, null, correlationId);
       return;
     }
     // El objeto ya se devolvió o el cambio no esperaba un pago: no se altera la fecha y queda para revisión.
     log.warn("El pago de la extensión {} no cambia la fecha del préstamo {} (estado {})", c.cambioFechaId(), prestamo.id(), prestamo.estado());
     recorder.auditar(prestamo, "PAGO_EXTENSION_SIN_EFECTO", anterior, null, correlationId);
+  }
+
+  @Override @Transactional
+  public void registrarResultadoRetencion(UUID prestamoId, UUID cambioId, String resultado, String detalle, String correlationId) {
+    Prestamo prestamo = bloquear(prestamoId);
+    String anterior = prestamo.estado().name();
+    Instant now = clock.instant();
+    boolean changed = switch (resultado) {
+      case "RETENIDA" -> prestamo.habilitarPagoExtension(cambioId, Instant.parse(detalle), now);
+      case "CONFIRMADA" -> prestamo.confirmarOcupacionExtension(cambioId, now, clock.ahoraLocal());
+      case "RECHAZADA" -> prestamo.rechazarRetencionExtension(cambioId, detalle, now);
+      default -> throw new IllegalArgumentException("Resultado de retención desconocido");
+    };
+    if (changed) recorder.guardar(prestamo, "EXTENSION_" + resultado, anterior, null, correlationId);
   }
 
   @Override @Transactional
@@ -173,6 +253,18 @@ public class LoanApplicationService implements LoanUseCases, LoanEventUseCases {
   @Override @Transactional
   public void registrarIncidenciaResuelta(UUID prestamoId, String correlationId) {
     reaccionar(prestamoId, "REGISTRAR_INCIDENCIA_RESUELTA", correlationId, Prestamo::registrarIncidenciaResuelta);
+  }
+
+  @Override @Transactional
+  public void proyectarIncidencia(UUID prestamoId, UUID incidenciaId, boolean resuelta, String correlationId) {
+    Prestamo p = bloquear(prestamoId);
+    if (!p.estado().abierto()) return;
+    int delta = incidentProjection.project(prestamoId, incidenciaId, resuelta);
+    if (delta == 0) return;
+    String anterior = p.estado().name();
+    if (delta > 0) p.registrarIncidenciaReportada(clock.instant());
+    else p.registrarIncidenciaResuelta(clock.instant());
+    recorder.guardar(p, "PROYECTAR_INCIDENCIA", anterior, null, correlationId);
   }
 
   @Override
@@ -205,7 +297,11 @@ public class LoanApplicationService implements LoanUseCases, LoanEventUseCases {
     String anterior = prestamo.estado().name();
     operacion.accept(prestamo, clock.instant());
     recorder.guardar(prestamo, accion, anterior, actor, correlationId);
-    return new PrestamoView(prestamo.datos(), prestamo.cambios().stream().map(CambioFecha::datos).toList(), List.of());
+    return vistaOperacion(prestamo);
+  }
+
+  private PrestamoView vistaOperacion(Prestamo prestamo) {
+    return new PrestamoView(prestamo.datos(), prestamo.cambios().stream().map(CambioFecha::datos).toList(), null);
   }
 
   private interface Reaccion { boolean aplicar(Prestamo prestamo, Instant now); }

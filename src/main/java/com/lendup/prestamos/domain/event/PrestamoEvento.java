@@ -9,6 +9,9 @@ public record PrestamoEvento(String tipo, long aggregateVersion, Map<String, Obj
   public static final String ACTIVADO = "PrestamoActivado";
   public static final String EXTENSION_SOLICITADA = "ExtensionSolicitada";
   public static final String EXTENSION_ACEPTADA = "ExtensionAceptada";
+  public static final String EXTENSION_RETENCION_SOLICITADA = "ExtensionRetencionSolicitada";
+  public static final String EXTENSION_CONFIRMACION_SOLICITADA = "ExtensionConfirmacionSolicitada";
+  public static final String EXTENSION_RETENCION_CANCELADA = "ExtensionRetencionCancelada";
   public static final String EXTENSION_RECHAZADA = "ExtensionRechazada";
   public static final String REPROGRAMACION_PROPUESTA = "ReprogramacionPropuesta";
   public static final String REPROGRAMACION_RECHAZADA = "ReprogramacionRechazada";
@@ -18,5 +21,6 @@ public record PrestamoEvento(String tipo, long aggregateVersion, Map<String, Obj
   public static final String FINALIZADO = "PrestamoFinalizado";
   public static final String CANCELADO = "PrestamoCancelado";
   public static final String CANCELACION_RECHAZADA = "CancelacionRechazada";
+  public static final String RECUPERACION_PENDIENTE = "RecuperacionPendiente";
   public static final String PERIODO_LIBERADO = "PeriodoPrestamoLiberado";
 }

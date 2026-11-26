@@ -30,6 +30,7 @@ public interface PrestamoState {
     return switch (estado) {
       case RESERVADO -> new ReservadoState();
       case ENTREGA_REGISTRADA -> new EntregaRegistradaState();
+      case RECUPERACION_PENDIENTE -> () -> EstadoPrestamo.RECUPERACION_PENDIENTE;
       case ACTIVO -> new ActivoState();
       case VENCIDO -> new VencidoState();
       case DEVOLUCION_REGISTRADA -> new DevolucionRegistradaState();

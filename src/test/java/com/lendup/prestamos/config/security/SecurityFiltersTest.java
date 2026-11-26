@@ -48,7 +48,7 @@ class SecurityFiltersTest {
 
   @Test void laRutaInternaExigeLaCredencialDeServicioExacta() throws Exception {
     request.addHeader("Authorization", "Bearer " + SERVICE_TOKEN);
-    new InternalServiceTokenFilter(SERVICE_TOKEN).doFilter(request, response, chain);
+    new InternalServiceTokenFilter(SERVICE_TOKEN, "").doFilter(request, response, chain);
     assertEquals(200, response.getStatus());
     assertNotNull(chain.getRequest());
   }
@@ -59,9 +59,19 @@ class SecurityFiltersTest {
       MockHttpServletResponse rs = new MockHttpServletResponse();
       MockFilterChain ch = new MockFilterChain();
       if (caso[1] != null) rq.addHeader("Authorization", caso[1]);
-      new InternalServiceTokenFilter(caso[0]).doFilter(rq, rs, ch);
+      new InternalServiceTokenFilter(caso[0], "").doFilter(rq, rs, ch);
       assertEquals(401, rs.getStatus());
       assertNull(ch.getRequest());
+    }
+  }
+
+  @Test void tokenCompartidoYTokenConFormatoJwtSeRechazan() throws Exception {
+    for (String token : new String[] {SERVICE_TOKEN, "aaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbb.cccccccccccccccc"}) {
+      var rq = new MockHttpServletRequest();
+      var rs = new MockHttpServletResponse();
+      rq.addHeader("Authorization", "Bearer " + token);
+      new InternalServiceTokenFilter(SERVICE_TOKEN, token).doFilter(rq, rs, new MockFilterChain());
+      assertEquals(401, rs.getStatus());
     }
   }
 }

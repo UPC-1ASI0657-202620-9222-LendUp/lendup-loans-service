@@ -45,6 +45,10 @@ public class LoanController {
   @Operation(summary = "Confirmar la devolución", description = "Solo el prestamista. Finaliza el préstamo si no hay incidencias pendientes (RF27).")
   PrestamoResponse confirmReturn(@PathVariable UUID id) { return PrestamoResponse.from(loans.confirmarDevolucion(actor.userId(), id, correlationId())); }
 
+  @PostMapping("/prestamos/{id}/confirmacion-recuperacion")
+  @Operation(summary = "Confirmar recuperación antes de cancelar", description = "Solo el prestamista con recuperación pendiente y sin incidencias abiertas.")
+  PrestamoResponse confirmRecovery(@PathVariable UUID id) { return PrestamoResponse.from(loans.confirmarRecuperacion(actor.userId(), id, correlationId())); }
+
   @PostMapping("/prestamos/{id}/extensiones")
   @ResponseStatus(HttpStatus.CREATED)
   @Operation(summary = "Solicitar una extensión", description = "Solo el prestatario, antes del vencimiento. El costo se calcula por bloques iniciados de 24 horas (RF23, R26).")
@@ -53,7 +57,7 @@ public class LoanController {
   }
 
   @PostMapping("/prestamos/{id}/extensiones/{subid}/respuesta")
-  @Operation(summary = "Responder una extensión", description = "Solo el prestamista. Al aceptarla queda pendiente de pago; la fecha cambia cuando Pagos lo confirma (RF24).")
+  @Operation(summary = "Responder una extensión", description = "Solo el prestamista. Con coordinación activa, la retención habilita el pago y la ocupación confirmada aplica la nueva fecha.")
   CambioFechaResponse extensionResponse(@PathVariable UUID id, @PathVariable UUID subid, @Valid @RequestBody ExtensionResponseRequest body) {
     return CambioFechaResponse.from(loans.responderExtension(actor.userId(), id, subid, body.estado(), body.motivo_rechazo(), correlationId()));
   }
